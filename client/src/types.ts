@@ -34,6 +34,10 @@ export interface Screen {
   id: string
   name: string
   media: Media | null
+  // Position on the canvas/board view (Figma-like). Optional: falls back to an
+  // auto grid layout when unset.
+  x?: number
+  y?: number
   hotspots: Hotspot[]
   // Swipe gestures anywhere on the screen.
   swipes?: Partial<Record<Direction, Action>>
@@ -61,6 +65,9 @@ export interface PrototypeSummary {
   createdAt: number
   updatedAt: number
   screenCount: number
+  // Preview of the start screen (null until media is added).
+  thumb?: string | null
+  thumbType?: MediaType | null
 }
 
 export interface TapEvent {

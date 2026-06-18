@@ -1,19 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { api } from '../api'
-import { drawHeatmap } from '../heatmap'
-import type { Prototype, SessionInfo, TapEvent } from '../types'
-import {
-  Badge,
-  Button,
-  EmptyState,
-  IconButton,
-  Segmented,
-  Spinner,
-  Toolbar,
-  ToolbarGroup,
-  type SegmentOption,
-} from '../components/ui'
+import { api } from '../../api'
+import { drawHeatmap } from '../../heatmap'
+import type { Prototype, SessionInfo, TapEvent } from '../../types'
+import { Badge, Button, Checkbox, EmptyState, Field, Segmented, Slider, toast, type SegmentOption } from '../../components/ui'
 
 type Mode = 'heat' | 'dots'
 type Filter = 'all' | 'hit' | 'miss'
@@ -29,12 +18,20 @@ const FILTER_OPTIONS: SegmentOption<Filter>[] = [
   { value: 'miss', label: 'Мимо' },
 ]
 
-export function Heatmaps() {
-  const { id } = useParams()
-  const nav = useNavigate()
-  const [doc, setDoc] = useState<Prototype | null>(null)
+// Heatmaps as an editor view. Returns three grid children (left screen list,
+// center canvas, right controls) so it slots straight into the editor grid —
+// the prototype doc and the selected screen are shared with the editor, so
+// switching the Холст / Экран / Карты tabs keeps your place.
+export function HeatmapsView({
+  doc,
+  selScreen,
+  onSelectScreen,
+}: {
+  doc: Prototype
+  selScreen: string | null
+  onSelectScreen: (id: string) => void
+}) {
   const [sessions, setSessions] = useState<SessionInfo[]>([])
-  const [selScreen, setSelScreen] = useState<string | null>(null)
   const [selSessions, setSelSessions] = useState<Set<string>>(new Set())
   const [allSessions, setAllSessions] = useState(true)
   const [events, setEvents] = useState<TapEvent[]>([])
@@ -56,25 +53,21 @@ export function Heatmaps() {
     measure()
   }, [])
 
-  const load = async () => {
-    if (!id) return
-    const [d, ss] = await Promise.all([api.getPrototype(id), api.getSessions(id)])
-    setDoc(d)
-    setSessions(ss)
-    setSelScreen((cur) => cur || d.startScreenId || d.screens[0]?.id || null)
-  }
+  const loadSessions = useCallback(() => {
+    api.getSessions(doc.id).then(setSessions).catch(() => {})
+  }, [doc.id])
   useEffect(() => {
-    load()
-  }, [id])
+    loadSessions()
+  }, [loadSessions])
 
   useEffect(() => {
-    if (!id || !selScreen) return
+    if (!selScreen) return
     const sessionIds = allSessions ? undefined : [...selSessions]
-    api.getEvents(id, { screen: selScreen, sessions: sessionIds }).then(setEvents).catch(() => {})
-  }, [id, selScreen, selSessions, allSessions, sessions])
+    api.getEvents(doc.id, { screen: selScreen, sessions: sessionIds }).then(setEvents).catch(() => {})
+  }, [doc.id, selScreen, selSessions, allSessions, sessions])
 
-  const screen = doc?.screens.find((s) => s.id === selScreen) || null
-  const aspect = doc ? doc.canvas.width / doc.canvas.height : 1
+  const screen = doc.screens.find((s) => s.id === selScreen) || null
+  const aspect = doc.canvas.width / doc.canvas.height
   const dims = useMemo(() => {
     const availW = Math.max(50, box.w - 48)
     const availH = Math.max(50, box.h - 48)
@@ -127,15 +120,14 @@ export function Heatmaps() {
   }
 
   const onImport = async (file: File) => {
-    if (!id) return
     try {
       const arr = JSON.parse(await file.text()) as TapEvent[]
       if (!Array.isArray(arr)) throw new Error()
-      const res = await api.sendEvents(id, arr)
-      alert(`Импортировано событий: ${res.added}`)
-      await load()
+      const res = await api.sendEvents(doc.id, arr)
+      toast(`Импортировано событий: ${res.added}`)
+      loadSessions()
     } catch {
-      alert('Не удалось импортировать файл результатов')
+      toast('Не удалось импортировать файл результатов', 'error')
     }
   }
 
@@ -146,23 +138,17 @@ export function Heatmaps() {
     return { total: events.length, hits, miss: events.length - hits, byHotspot }
   }, [events])
 
-  if (!doc) return <div className="empty-state" style={{ height: '100vh' }}><Spinner /></div>
-
   return (
-    <div className="heat">
-      <div className="panel heat__side">
+    <>
+      <div className="panel editor__panel-left">
         <div className="panel__section">
-          <div className="row" style={{ marginBottom: 'var(--space-3)' }}>
-            <IconButton icon="arrow-left" label="Все прототипы" onClick={() => nav('/')} />
-            <span className="grow truncate" style={{ fontWeight: 'var(--fw-semibold)' }}>{doc.name}</span>
-          </div>
           <div className="panel__title" style={{ marginBottom: 'var(--space-2)' }}>Экраны</div>
           <div className="col" style={{ gap: 2 }}>
             {doc.screens.map((s) => (
               <div
                 key={s.id}
                 className={`screen-item ${s.id === selScreen ? 'is-active' : ''}`}
-                onClick={() => setSelScreen(s.id)}
+                onClick={() => onSelectScreen(s.id)}
               >
                 <span className="screen-item__name grow truncate">{s.name}</span>
                 <span className="screen-item__meta">{s.hotspots.length} зон</span>
@@ -170,83 +156,9 @@ export function Heatmaps() {
             ))}
           </div>
         </div>
-
-        <div className="panel__section">
-          <div className="panel__title" style={{ marginBottom: 'var(--space-2)' }}>
-            Сессии · {sessions.length}
-          </div>
-          {sessions.length === 0 ? (
-            <p className="dim" style={{ fontSize: 'var(--fs-ui)' }}>
-              Ещё нет данных. Запусти прототип на терминале.
-            </p>
-          ) : (
-            <>
-              <label className="session-row">
-                <input
-                  type="checkbox"
-                  checked={allSessions}
-                  onChange={(e) => {
-                    setAllSessions(e.target.checked)
-                    if (e.target.checked) setSelSessions(new Set())
-                  }}
-                />
-                <span style={{ fontWeight: 'var(--fw-semibold)' }}>Все сессии</span>
-              </label>
-              {sessions.map((s, i) => (
-                <label className="session-row" key={s.sessionId}>
-                  <input
-                    type="checkbox"
-                    checked={allSessions || selSessions.has(s.sessionId)}
-                    disabled={allSessions}
-                    onChange={() => toggleSession(s.sessionId)}
-                  />
-                  <span className="session-dot" style={{ background: SESSION_COLORS[i % SESSION_COLORS.length] }} />
-                  <span className="grow truncate">{s.participant || s.device || 'сессия'}</span>
-                  <span className="dim">{s.count}</span>
-                </label>
-              ))}
-            </>
-          )}
-        </div>
-
-        <div className="panel__section col">
-          <Button block icon="upload" onClick={() => importRef.current?.click()}>
-            Импорт результатов
-          </Button>
-          <input
-            ref={importRef}
-            type="file"
-            accept="application/json"
-            className="hidden-input"
-            onChange={(e) => e.target.files?.[0] && onImport(e.target.files[0])}
-          />
-          <Button block variant="ghost" icon="refresh" onClick={load}>
-            Обновить
-          </Button>
-        </div>
       </div>
 
-      <div className="heat__main">
-        <Toolbar>
-          <ToolbarGroup label="Режим">
-            <Segmented options={MODE_OPTIONS} value={mode} onChange={setMode} />
-          </ToolbarGroup>
-          <ToolbarGroup label="Клики">
-            <Segmented options={FILTER_OPTIONS} value={filter} onChange={setFilter} />
-          </ToolbarGroup>
-          {mode === 'heat' && (
-            <ToolbarGroup label="Радиус">
-              <input type="range" min={10} max={70} value={radius} onChange={(e) => setRadius(Number(e.target.value))} />
-            </ToolbarGroup>
-          )}
-          <div className="grow" />
-          <div className="row" style={{ gap: 'var(--space-1)' }}>
-            <Badge>всего {stats.total}</Badge>
-            <Badge variant="success">по зонам {stats.hits}</Badge>
-            <Badge>мимо {stats.miss}</Badge>
-          </div>
-        </Toolbar>
-
+      <div className="heat-embed__main">
         <div className="heat__canvas" ref={wrapCb}>
           {!screen ? (
             <EmptyState icon="target" title="Выбери экран" />
@@ -295,6 +207,87 @@ export function Heatmaps() {
           <span className="dim">{screen?.name}</span>
         </div>
       </div>
-    </div>
+
+      <div className="panel editor__panel-right">
+        <div className="panel__section col">
+          <div className="panel__title" style={{ margin: 0 }}>Отображение</div>
+          <Field label="Режим">
+            <Segmented options={MODE_OPTIONS} value={mode} onChange={setMode} />
+          </Field>
+          <Field label="Клики">
+            <Segmented options={FILTER_OPTIONS} value={filter} onChange={setFilter} />
+          </Field>
+          {mode === 'heat' && (
+            <Field label="Радиус">
+              <Slider min={10} max={70} value={radius} onChange={setRadius} ariaLabel="Радиус" />
+            </Field>
+          )}
+        </div>
+
+        <div className="panel__section">
+          <div className="panel__title" style={{ marginBottom: 'var(--space-2)' }}>
+            Сессии · {sessions.length}
+          </div>
+          {sessions.length === 0 ? (
+            <p className="dim" style={{ fontSize: 'var(--fs-ui)' }}>
+              Ещё нет данных. Запусти прототип на терминале.
+            </p>
+          ) : (
+            <>
+              <Checkbox
+                className="session-row"
+                checked={allSessions}
+                onChange={(v) => {
+                  setAllSessions(v)
+                  if (v) setSelSessions(new Set())
+                }}
+                label={<span style={{ fontWeight: 'var(--fw-semibold)' }}>Все сессии</span>}
+              />
+              {sessions.map((s, i) => (
+                <Checkbox
+                  key={s.sessionId}
+                  className="session-row"
+                  checked={allSessions || selSessions.has(s.sessionId)}
+                  disabled={allSessions}
+                  onChange={() => toggleSession(s.sessionId)}
+                  label={
+                    <span className="session-row__main">
+                      <span className="session-dot" style={{ background: SESSION_COLORS[i % SESSION_COLORS.length] }} />
+                      <span className="grow truncate">{s.participant || s.device || 'сессия'}</span>
+                      <span className="dim">{s.count}</span>
+                    </span>
+                  }
+                />
+              ))}
+            </>
+          )}
+        </div>
+
+        <div className="panel__section">
+          <div className="panel__title" style={{ marginBottom: 'var(--space-2)' }}>Статистика</div>
+          <div className="row" style={{ gap: 'var(--space-1)', flexWrap: 'wrap' }}>
+            <Badge>всего {stats.total}</Badge>
+            <Badge variant="success">по зонам {stats.hits}</Badge>
+            <Badge>мимо {stats.miss}</Badge>
+          </div>
+        </div>
+
+        <div className="panel__section col">
+          <Button block icon="upload" onClick={() => importRef.current?.click()}>
+            Импорт результатов
+          </Button>
+          <input
+            ref={importRef}
+            type="file"
+            accept="application/json"
+            className="hidden-input"
+            onChange={(e) => e.target.files?.[0] && onImport(e.target.files[0])}
+          />
+          <Button block variant="ghost" icon="refresh" onClick={loadSessions}>
+            Обновить
+          </Button>
+        </div>
+      </div>
+    </>
   )
 }

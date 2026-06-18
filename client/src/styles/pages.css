@@ -37,17 +37,38 @@
 }
 .proto-card__preview {
   aspect-ratio: 16 / 10;
+  /* flex: none + min-height: 0 keep the box at its aspect-ratio height — without
+     them a portrait thumbnail's intrinsic height inflates the preview. */
+  flex: none;
+  min-height: 0;
   background: var(--bg-sunken);
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--text-tertiary);
   position: relative;
+  overflow: hidden;
 }
-.proto-card__preview img {
+.proto-card__preview img,
+.proto-card__preview video {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+/* Media-less prototypes still read as distinct: a deterministic tinted gradient
+   derived from the id (--seed = hue). */
+.proto-card__placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--seed, 220), 45%, 55%);
+  background: linear-gradient(
+    135deg,
+    hsl(var(--seed, 220), 52%, 94%),
+    hsl(calc(var(--seed, 220) + 40), 56%, 88%)
+  );
 }
 .proto-card__body {
   padding: var(--space-3) var(--space-4) var(--space-4);
@@ -111,6 +132,20 @@
   grid-template-rows: 48px 1fr;
   height: 100vh;
   background: var(--bg-canvas);
+  position: relative;
+}
+/* Floating view switcher, centered over the canvas column (offset by half the
+   panel-width difference: (244 - 320) / 2 = -38px). */
+.editor__viewswitch {
+  position: absolute;
+  top: calc(48px + var(--space-3));
+  left: calc(50% - 38px);
+  transform: translateX(-50%);
+  z-index: 5;
+  padding: 4px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
 }
 .editor > * {
   min-height: 0;
@@ -144,6 +179,38 @@
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
+/* static title — sizes to its content, double-click to edit */
+.editor__name-display {
+  height: var(--control-h-md);
+  max-width: 320px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  padding: 0 var(--space-2);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  color: var(--text-primary);
+  cursor: text;
+}
+.editor__name-display:hover {
+  background: var(--bg-hover);
+}
+/* resolution chip before the title */
+.editor__terminal {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 24px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
 .editor__panel-left {
   border-right: 1px solid var(--border-subtle);
 }
@@ -151,7 +218,46 @@
   border-left: 1px solid var(--border-subtle);
 }
 
+.stage-area {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* one workspace-level hint under the header — not a pill on every screen.
+   Dismissible (×) and remembered via localStorage. */
+.stage-hint {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  font-size: var(--fs-label);
+  color: var(--text-tertiary);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.stage-hint__close {
+  position: absolute;
+  right: var(--space-2);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  padding: 3px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.stage-hint__close:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
 .stage-wrap {
+  flex: 1;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -175,23 +281,6 @@
   height: 100%;
   object-fit: contain;
 }
-.stage__hint {
-  position: absolute;
-  top: var(--space-3);
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  background: rgba(12, 13, 16, 0.78);
-  color: #fff;
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-label);
-  pointer-events: none;
-  white-space: nowrap;
-}
-
 /* hotspots (editable regions — outline is intentional here) */
 .hotspot {
   position: absolute;
@@ -287,22 +376,141 @@
   color: var(--text-tertiary);
 }
 
-/* ============ Heatmaps ============ */
-.heat {
-  display: grid;
-  grid-template-columns: 296px 1fr;
-  height: 100vh;
+/* ============ Editor: canvas / board (React Flow) ============ */
+.editor__canvas {
+  height: 100%;
+  min-height: 0;
   background: var(--bg-canvas);
 }
-.heat > * {
-  min-height: 0;
+.editor__canvas .react-flow__attribution {
+  display: none;
 }
-.heat__side {
-  border-right: 1px solid var(--border-subtle);
+/* Render arrows above the screens so it's clear which zone each one leaves. */
+.editor__canvas .react-flow__edges,
+.editor__canvas .react-flow__edgelabel-renderer {
+  z-index: 5;
 }
-.heat__main {
+.editor__canvas .react-flow__controls,
+.editor__canvas .react-flow__minimap {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  border: none;
+}
+.editor__canvas .react-flow__controls-button {
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+.editor__canvas .react-flow__controls-button:hover {
+  background: var(--bg-hover);
+}
+.editor__canvas .react-flow__edge-path {
+  transition: stroke var(--dur-fast) var(--ease);
+}
+
+.flow-node {
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  transition: box-shadow var(--dur) var(--ease);
+}
+.flow-node.is-selected {
+  box-shadow: 0 0 0 2px var(--accent), var(--shadow-md);
+}
+.flow-node__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--fs-ui);
+  font-weight: var(--fw-semibold);
+}
+.flow-node__media {
+  position: relative;
+  background: #000;
+  overflow: hidden;
+}
+.flow-node__media img,
+.flow-node__media video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.flow-node__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  background: var(--bg-sunken);
+  color: var(--text-tertiary);
+}
+.flow-node__zone {
+  position: absolute;
+  border: 1.5px solid var(--accent);
+  background: rgba(13, 153, 255, 0.16);
+  border-radius: 3px;
+}
+.flow-node__edit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  width: 100%;
+  height: 30px;
+  border: none;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  border-top: 1px solid var(--border-subtle);
+}
+.flow-node__edit:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* handles */
+.flow-handle {
+  width: 11px;
+  height: 11px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface);
+  border: 2px solid var(--accent);
+}
+/* one source connector per click zone — the arrow leaves from the zone */
+.flow-handle--hotspot {
+  background: var(--accent);
+  border-color: var(--bg-surface);
+  box-shadow: 0 0 0 1px var(--accent);
+  cursor: crosshair;
+}
+/* screen-level source (swipe / timer / video) — invisible, non-draggable anchor;
+   those transitions are wired in the right inspector, not by dragging. */
+.flow-handle--screen,
+/* target spans nothing visible — drops are detected on the whole node */
+.flow-handle--in {
+  opacity: 0;
+  border: none;
+  background: transparent;
+  pointer-events: none;
+}
+/* while dragging a connection, show screens as droppable */
+.react-flow.is-connecting .flow-node__media {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+
+/* ============ Heatmaps (embedded as the editor's «Карты» view) ============ */
+/* Center column of the editor grid: canvas grows, legend pinned below. */
+.heat-embed__main {
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 .heat__canvas {
   flex: 1;
@@ -364,17 +572,20 @@
   border-radius: var(--radius-pill);
   background: linear-gradient(90deg, rgba(0, 0, 255, 0.7), cyan, lime, yellow, red);
 }
-.session-row {
+/* session checkbox row */
+.checkbox.session-row {
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
+}
+.checkbox.session-row:not(.is-disabled):hover {
+  background: var(--bg-hover);
+}
+.session-row__main {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-1) var(--space-1);
-  font-size: var(--fs-ui);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-}
-.session-row:hover {
-  background: var(--bg-hover);
+  flex: 1;
+  min-width: 0;
 }
 .session-dot {
   width: 9px;

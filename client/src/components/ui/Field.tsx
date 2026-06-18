@@ -1,9 +1,4 @@
-import type {
-  InputHTMLAttributes,
-  ReactNode,
-  SelectHTMLAttributes,
-} from 'react'
-import { Icon } from './Icon'
+import type { InputHTMLAttributes, ReactNode } from 'react'
 
 export function Field({
   label,
@@ -31,19 +26,4 @@ export function Field({
 
 export function Input({ className = '', ...props }: InputHTMLAttributes<HTMLInputElement>) {
   return <input className={`input ${className}`} {...props} />
-}
-
-export function Select({
-  className = '',
-  children,
-  ...props
-}: SelectHTMLAttributes<HTMLSelectElement>) {
-  return (
-    <span className="select-wrap">
-      <select className={`select ${className}`} {...props}>
-        {children}
-      </select>
-      <Icon name="chevron-down" size={16} className="select-wrap__chevron" />
-    </span>
-  )
 }

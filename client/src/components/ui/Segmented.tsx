@@ -10,13 +10,15 @@ export function Segmented<T extends string>({
   options,
   value,
   onChange,
+  size = 'md',
 }: {
   options: SegmentOption<T>[]
   value: T
   onChange: (value: T) => void
+  size?: 'md' | 'lg'
 }) {
   return (
-    <div className="segmented" role="tablist">
+    <div className={`segmented segmented--${size}`} role="tablist">
       {options.map((o) => (
         <button
           key={o.value}
@@ -25,7 +27,7 @@ export function Segmented<T extends string>({
           className={`segmented__item ${o.value === value ? 'is-active' : ''}`}
           onClick={() => onChange(o.value)}
         >
-          {o.icon && <Icon name={o.icon} size={15} />}
+          {o.icon && <Icon name={o.icon} size={size === 'lg' ? 18 : 15} />}
           {o.label}
         </button>
       ))}

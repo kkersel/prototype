@@ -34,12 +34,17 @@ export async function listPrototypes() {
     if (!f.endsWith('.json')) continue
     try {
       const doc = JSON.parse(await fsp.readFile(path.join(PROTO_DIR, f), 'utf8'))
+      const screens = Array.isArray(doc.screens) ? doc.screens : []
+      // Preview thumbnail: the start screen's media (falls back to the first screen).
+      const cover = screens.find((s) => s.id === doc.startScreenId) || screens[0]
       out.push({
         id: doc.id,
         name: doc.name,
         createdAt: doc.createdAt,
         updatedAt: doc.updatedAt,
-        screenCount: Array.isArray(doc.screens) ? doc.screens.length : 0,
+        screenCount: screens.length,
+        thumb: cover?.media?.url || null,
+        thumbType: cover?.media?.type || null,
       })
     } catch {
       /* skip corrupt file */

@@ -5,13 +5,26 @@ import type { Action, Direction, Hotspot, Prototype, Screen, Transition } from '
 import {
   Badge,
   Button,
+  Checkbox,
+  Collapsible,
   EmptyState,
   Field,
   Icon,
   IconButton,
   Input,
+  Segmented,
   Select,
+  type SegmentOption,
 } from '../components/ui'
+import { CanvasView } from './editor/CanvasView'
+import { HeatmapsView } from './editor/HeatmapsView'
+
+type View = 'canvas' | 'screen' | 'heat'
+const VIEW_OPTIONS: SegmentOption<View>[] = [
+  { value: 'canvas', label: 'Холст', icon: 'map' },
+  { value: 'screen', label: 'Экран', icon: 'image' },
+  { value: 'heat', label: 'Карты', icon: 'target' },
+]
 
 const uid = () => Math.random().toString(36).slice(2, 10)
 const TRANSITIONS: Transition[] = [
@@ -24,23 +37,149 @@ const TRANSITIONS: Transition[] = [
   'push-left',
 ]
 
-export function Editor() {
+// Known terminals get an icon; anything else shows its raw resolution.
+const TERMINALS = [
+  { id: 'P10', icon: 'p10', w: 720, h: 1600 },
+  { id: 'P12', icon: 'p12', w: 720, h: 720 },
+] as const
+
+export function Editor({ initialView }: { initialView?: View } = {}) {
   const { id } = useParams()
   const nav = useNavigate()
   const [doc, setDoc] = useState<Prototype | null>(null)
   const [selScreen, setSelScreen] = useState<string | null>(null)
   const [selHotspot, setSelHotspot] = useState<string | null>(null)
+  const [view, setView] = useState<View>(
+    () => initialView || (localStorage.getItem('tp-editor-view') as View) || 'canvas'
+  )
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle')
   const lastSaved = useRef<string>('')
+  // Latest doc for the unmount flush below (the cleanup closure would otherwise
+  // capture a stale value).
+  const docRef = useRef(doc)
+  docRef.current = doc
+
+  // Undo / redo: coalesced JSON snapshots of the doc. `histBaseline` is the last
+  // committed state; rapid edits (e.g. dragging a zone) collapse into one step.
+  const past = useRef<string[]>([])
+  const future = useRef<string[]>([])
+  const histBaseline = useRef<string>('')
+  const histTimer = useRef<number | null>(null)
+  const [canUndo, setCanUndo] = useState(false)
+  const [canRedo, setCanRedo] = useState(false)
+  const syncHist = useCallback(() => {
+    setCanUndo(past.current.length > 0)
+    setCanRedo(future.current.length > 0)
+  }, [])
+  const commitPending = useCallback((snap: string) => {
+    if (snap === histBaseline.current) return
+    past.current.push(histBaseline.current)
+    if (past.current.length > 100) past.current.shift()
+    future.current = []
+    histBaseline.current = snap
+  }, [])
+
+  useEffect(() => {
+    // Don't make "Карты" the sticky default for plain /editor visits — only
+    // remember the editing views.
+    if (view !== 'heat') localStorage.setItem('tp-editor-view', view)
+  }, [view])
+
+  // Flush a pending (debounced) save when leaving the editor, so the last edits
+  // made within the autosave window aren't lost on navigation.
+  useEffect(
+    () => () => {
+      const d = docRef.current
+      if (d && JSON.stringify(d) !== lastSaved.current) api.savePrototype(d).catch(() => {})
+    },
+    []
+  )
 
   useEffect(() => {
     if (!id) return
     api.getPrototype(id).then((d) => {
       setDoc(d)
-      lastSaved.current = JSON.stringify(d)
+      const snap = JSON.stringify(d)
+      lastSaved.current = snap
+      histBaseline.current = snap
+      past.current = []
+      future.current = []
+      setCanUndo(false)
+      setCanRedo(false)
       setSelScreen(d.startScreenId || d.screens[0]?.id || null)
     })
   }, [id])
+
+  // Record an undo step once edits settle (coalesces drags / rapid changes).
+  useEffect(() => {
+    if (!doc) return
+    const snap = JSON.stringify(doc)
+    if (snap === histBaseline.current) return
+    histTimer.current = window.setTimeout(() => {
+      commitPending(snap)
+      syncHist()
+      histTimer.current = null
+    }, 500)
+    return () => {
+      if (histTimer.current) {
+        clearTimeout(histTimer.current)
+        histTimer.current = null
+      }
+    }
+  }, [doc, commitPending, syncHist])
+
+  const undo = useCallback(() => {
+    if (histTimer.current) {
+      clearTimeout(histTimer.current)
+      histTimer.current = null
+    }
+    const cur = docRef.current
+    if (!cur) return
+    commitPending(JSON.stringify(cur)) // fold any not-yet-committed edit into history
+    if (past.current.length === 0) {
+      syncHist()
+      return
+    }
+    const target = past.current.pop()!
+    future.current.push(histBaseline.current)
+    histBaseline.current = target
+    setDoc(JSON.parse(target) as Prototype)
+    syncHist()
+  }, [commitPending, syncHist])
+
+  const redo = useCallback(() => {
+    if (histTimer.current) {
+      clearTimeout(histTimer.current)
+      histTimer.current = null
+    }
+    const cur = docRef.current
+    if (!cur) return
+    commitPending(JSON.stringify(cur)) // a fresh edit cancels the redo branch
+    if (future.current.length === 0) {
+      syncHist()
+      return
+    }
+    const target = future.current.pop()!
+    past.current.push(histBaseline.current)
+    histBaseline.current = target
+    setDoc(JSON.parse(target) as Prototype)
+    syncHist()
+  }, [commitPending, syncHist])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return
+      const k = e.key.toLowerCase()
+      if (k !== 'z' && k !== 'y') return
+      const el = document.activeElement as HTMLElement | null
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+      e.preventDefault()
+      if (k === 'y' || e.shiftKey) redo()
+      else undo()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [undo, redo])
 
   useEffect(() => {
     if (!doc) return
@@ -128,68 +267,140 @@ export function Editor() {
     a.click()
   }
 
+  const onMoveNode = useCallback(
+    (sid: string, x: number, y: number) => setScreen(sid, (s) => ((s.x = x), (s.y = y))),
+    [setScreen]
+  )
+  // Canvas: drag a zone's connector onto a screen → point that zone at it.
+  const onConnectHotspot = useCallback(
+    (fromSid: string, hid: string, toSid: string) =>
+      setScreen(fromSid, (s) => {
+        const h = s.hotspots.find((x) => x.id === hid)
+        if (h) h.action = { ...h.action, type: 'goto', toScreenId: toSid, transition: h.action.transition || 'none' }
+      }),
+    [setScreen]
+  )
+  // Canvas: drag an arrow's end onto another screen → re-point that specific link
+  // (the edge id encodes what it is: zone / swipe / timer / video).
+  const rewireEdge = useCallback(
+    (edgeId: string, newTarget: string) => {
+      const [kind, sid, key] = edgeId.split(':')
+      setScreen(sid, (s) => {
+        if (kind === 'h') {
+          const h = s.hotspots.find((x) => x.id === key)
+          if (h) h.action = { ...h.action, type: 'goto', toScreenId: newTarget, transition: h.action.transition || 'none' }
+        } else if (kind === 'sw' && s.swipes?.[key as Direction]) {
+          s.swipes[key as Direction]!.toScreenId = newTarget
+        } else if (kind === 't' && s.autoAdvance) {
+          s.autoAdvance.action.toScreenId = newTarget
+        } else if (kind === 'v' && s.onVideoEnd) {
+          s.onVideoEnd.toScreenId = newTarget
+        }
+      })
+    },
+    [setScreen]
+  )
+  // Canvas: click an arrow → select its zone (or screen) so the right inspector
+  // shows «Кликабельная зона» without leaving the canvas.
+  const onSelectEdge = useCallback((edgeId: string) => {
+    const [kind, sid, key] = edgeId.split(':')
+    setSelScreen(sid)
+    setSelHotspot(kind === 'h' ? key : null)
+  }, [])
+  const onEditScreen = useCallback((sid: string) => {
+    setSelScreen(sid)
+    setSelHotspot(null)
+    setView('screen')
+  }, [])
+
   if (!doc) return <div className="empty-state" style={{ height: '100vh' }}><span className="spinner" /></div>
 
   return (
     <div className="editor">
       <div className="editor__topbar">
         <IconButton icon="arrow-left" label="Все прототипы" onClick={() => nav('/')} />
-        <input
-          className="editor__name"
-          value={doc.name}
-          onChange={(e) => update((d) => ((d.name = e.target.value), d))}
-        />
-        <Badge>
-          {doc.canvas.width}×{doc.canvas.height}
-        </Badge>
+        <TerminalBadge canvas={doc.canvas} />
+        <EditableName value={doc.name} onChange={(name) => update((d) => ((d.name = name), d))} />
         <SaveStatus state={saveState} />
         <div className="grow" />
+        <IconButton icon="undo" label="Отменить (⌘Z)" disabled={!canUndo} onClick={undo} />
+        <IconButton icon="redo" label="Вернуть (⌘⇧Z)" disabled={!canRedo} onClick={redo} />
         <Button icon="download" onClick={exportJson}>
           Экспорт
-        </Button>
-        <Button icon="target" onClick={() => nav(`/heatmaps/${doc.id}`)}>
-          Тепловые карты
         </Button>
         <Button variant="primary" icon="play" onClick={() => nav(`/play/${doc.id}`)}>
           Запустить
         </Button>
       </div>
 
-      <ScreenPanel
-        doc={doc}
-        sel={selScreen}
-        onSelect={(s) => {
-          setSelScreen(s)
-          setSelHotspot(null)
-        }}
-        onAdd={addScreen}
-        onRemove={removeScreen}
-        onMove={moveScreen}
-        onSetStart={(sid) => update((d) => ((d.startScreenId = sid), d))}
-      />
+      <div className="editor__viewswitch">
+        <Segmented options={VIEW_OPTIONS} value={view} onChange={setView} />
+      </div>
 
-      <Stage
-        doc={doc}
-        screen={screen}
-        selHotspot={selHotspot}
-        onSelectHotspot={setSelHotspot}
-        onChange={setScreen}
-      />
+      {view === 'heat' ? (
+        <HeatmapsView
+          doc={doc}
+          selScreen={selScreen}
+          onSelectScreen={(s) => {
+            setSelScreen(s)
+            setSelHotspot(null)
+          }}
+        />
+      ) : (
+        <>
+          <ScreenPanel
+            doc={doc}
+            sel={selScreen}
+            onSelect={(s) => {
+              setSelScreen(s)
+              setSelHotspot(null)
+            }}
+            onAdd={addScreen}
+            onRemove={removeScreen}
+            onMove={moveScreen}
+            onSetStart={(sid) => update((d) => ((d.startScreenId = sid), d))}
+          />
 
-      <RightPanel
-        doc={doc}
-        screen={screen}
-        selHotspot={selHotspot}
-        onScreen={setScreen}
-        onReplaceMedia={replaceMedia}
-        onSelectHotspot={setSelHotspot}
-        onDeleteHotspot={(hid) =>
-          screen &&
-          setScreen(screen.id, (s) => {
-            s.hotspots = s.hotspots.filter((h) => h.id !== hid)
-          })
-        }
-      />
+          {view === 'canvas' ? (
+            <CanvasView
+              doc={doc}
+              selScreen={selScreen}
+              onSelect={(s) => {
+                setSelScreen(s)
+                setSelHotspot(null)
+              }}
+              onMoveNode={onMoveNode}
+              onConnectHotspot={onConnectHotspot}
+              onRewireEdge={rewireEdge}
+              onSelectEdge={onSelectEdge}
+              onEditScreen={onEditScreen}
+            />
+          ) : (
+            <Stage
+              doc={doc}
+              screen={screen}
+              selHotspot={selHotspot}
+              onSelectHotspot={setSelHotspot}
+              onChange={setScreen}
+            />
+          )}
+
+          <RightPanel
+            doc={doc}
+            screen={screen}
+            selHotspot={selHotspot}
+            onScreen={setScreen}
+            onReplaceMedia={replaceMedia}
+            onSelectHotspot={setSelHotspot}
+            onDeleteHotspot={(hid) =>
+              screen &&
+              setScreen(screen.id, (s) => {
+                s.hotspots = s.hotspots.filter((h) => h.id !== hid)
+              })
+            }
+          />
+        </>
+      )}
     </div>
   )
 }
@@ -206,6 +417,74 @@ function SaveStatus({ state }: { state: 'idle' | 'saving' | 'saved' }) {
         </>
       )}
     </span>
+  )
+}
+
+// Resolution chip: an icon for known terminals (P10 / P12), raw numbers otherwise.
+function TerminalBadge({ canvas }: { canvas: { width: number; height: number } }) {
+  const t = TERMINALS.find((t) => t.w === canvas.width && t.h === canvas.height)
+  return (
+    <span
+      className="editor__terminal"
+      title={t ? `${t.id} · ${t.w}×${t.h}` : `Свой размер · ${canvas.width}×${canvas.height}`}
+    >
+      {t ? (
+        <>
+          <Icon name={t.icon} size={16} /> {t.id}
+        </>
+      ) : (
+        `${canvas.width}×${canvas.height}`
+      )}
+    </span>
+  )
+}
+
+// Figma-style title: static text by default, double-click (or Enter) to rename.
+function EditableName({ value, onChange }: { value: string; onChange: (name: string) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(value)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!editing) setDraft(value)
+  }, [value, editing])
+  useEffect(() => {
+    if (editing) inputRef.current?.select()
+  }, [editing])
+
+  const commit = () => {
+    const v = draft.trim()
+    if (v && v !== value) onChange(v)
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        autoFocus
+        className="editor__name"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit()
+          else if (e.key === 'Escape') setEditing(false)
+        }}
+      />
+    )
+  }
+  return (
+    <button
+      className="editor__name-display truncate"
+      title="Двойной клик — переименовать"
+      onDoubleClick={() => setEditing(true)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === 'F2') setEditing(true)
+      }}
+    >
+      {value}
+    </button>
   )
 }
 
@@ -305,6 +584,11 @@ function Stage(props: {
   const stageRef = useRef<HTMLDivElement>(null)
   const [box, setBox] = useState({ w: 0, h: 0 })
   const [draft, setDraft] = useState<null | { x: number; y: number; w: number; h: number }>(null)
+  const [hintHidden, setHintHidden] = useState(() => localStorage.getItem('tp-hint-zones') === '1')
+  const dismissHint = () => {
+    setHintHidden(true)
+    localStorage.setItem('tp-hint-zones', '1')
+  }
   const drag = useRef<null | {
     mode: 'draw' | 'move' | 'resize'
     hid?: string
@@ -431,7 +715,16 @@ function Stage(props: {
   }
 
   return (
-    <div className="stage-wrap" ref={wrapRef}>
+    <div className="stage-area">
+      {props.screen && !hintHidden && (
+        <div className="stage-hint">
+          <Icon name="target" size={14} /> Потяни по картинке, чтобы создать кликабельную зону
+          <button className="stage-hint__close" onClick={dismissHint} aria-label="Скрыть подсказку">
+            <Icon name="close" size={14} />
+          </button>
+        </div>
+      )}
+      <div className="stage-wrap" ref={wrapRef}>
       {!props.screen ? (
         <EmptyState
           icon="image"
@@ -480,11 +773,9 @@ function Stage(props: {
             />
           )}
 
-          <div className="stage__hint">
-            <Icon name="target" size={14} /> Потяни по картинке, чтобы создать кликабельную зону
-          </div>
         </div>
       )}
+      </div>
     </div>
   )
 }
@@ -589,12 +880,12 @@ function RightPanel(props: {
           <span className="panel__title" style={{ margin: 0 }}>
             Видео
           </span>
-          <Toggle
+          <Checkbox
             label="Автоплей"
             checked={!!screen.videoAutoplay}
             onChange={(v) => props.onScreen(screen.id, (s) => (s.videoAutoplay = v))}
           />
-          <Toggle
+          <Checkbox
             label="Зациклить"
             checked={!!screen.videoLoop}
             onChange={(v) => props.onScreen(screen.id, (s) => (s.videoLoop = v))}
@@ -612,7 +903,7 @@ function RightPanel(props: {
         <span className="panel__title" style={{ margin: 0 }}>
           Авто-переход (таймер)
         </span>
-        <Toggle
+        <Checkbox
           label="Включить"
           checked={!!screen.autoAdvance}
           onChange={(v) =>
@@ -649,46 +940,29 @@ function RightPanel(props: {
       </div>
 
       <div className="panel__section col">
-        <span className="panel__title" style={{ margin: 0 }}>
-          Свайпы
-        </span>
+        <Collapsible title="Свайпы">
         {(['left', 'right', 'up', 'down'] as Direction[]).map((dir) => (
           <Field key={dir} label={`Свайп ${dirLabel(dir)}`}>
             <Select
               value={screen.swipes?.[dir]?.toScreenId || ''}
-              onChange={(e) =>
+              placeholder="— нет —"
+              options={[
+                { value: '', label: '— нет —' },
+                ...screenOptions.map((s) => ({ value: s.id, label: s.name })),
+              ]}
+              onChange={(v) =>
                 props.onScreen(screen.id, (s) => {
                   s.swipes = s.swipes || {}
-                  if (!e.target.value) delete s.swipes[dir]
-                  else
-                    s.swipes[dir] = {
-                      type: 'goto',
-                      toScreenId: e.target.value,
-                      transition: defaultSwipeTransition(dir),
-                    }
+                  if (!v) delete s.swipes[dir]
+                  else s.swipes[dir] = { type: 'goto', toScreenId: v, transition: defaultSwipeTransition(dir) }
                 })
               }
-            >
-              <option value="">— нет —</option>
-              {screenOptions.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </Select>
+            />
           </Field>
         ))}
+        </Collapsible>
       </div>
     </div>
-  )
-}
-
-function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <label className="row" style={{ gap: 'var(--space-2)', cursor: 'pointer' }}>
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      <span style={{ fontSize: 'var(--fs-ui)' }}>{label}</span>
-    </label>
   )
 }
 
@@ -705,42 +979,36 @@ function ActionEditor(props: {
       <Field label={props.title}>
         <Select
           value={a.type}
-          onChange={(e) => {
-            const type = e.target.value as Action['type']
+          options={[
+            { value: 'none', label: '— ничего —' },
+            { value: 'goto', label: 'Перейти на экран' },
+            ...(props.allowBack ? [{ value: 'back', label: 'Вернуться назад' }] : []),
+          ]}
+          onChange={(v) => {
+            const type = v as Action['type']
             props.onChange({ ...a, type, toScreenId: type === 'goto' ? a.toScreenId ?? null : null })
           }}
-        >
-          <option value="none">— ничего —</option>
-          <option value="goto">Перейти на экран</option>
-          {props.allowBack && <option value="back">Вернуться назад</option>}
-        </Select>
+        />
       </Field>
       {a.type === 'goto' && (
         <>
           <Field label="Экран">
             <Select
               value={a.toScreenId || ''}
-              onChange={(e) => props.onChange({ ...a, toScreenId: e.target.value || null })}
-            >
-              <option value="">— выбрать —</option>
-              {props.screens.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </Select>
+              placeholder="— выбрать —"
+              options={[
+                { value: '', label: '— выбрать —' },
+                ...props.screens.map((s) => ({ value: s.id, label: s.name })),
+              ]}
+              onChange={(v) => props.onChange({ ...a, toScreenId: v || null })}
+            />
           </Field>
           <Field label="Переход">
             <Select
               value={a.transition || 'none'}
-              onChange={(e) => props.onChange({ ...a, transition: e.target.value as Transition })}
-            >
-              {TRANSITIONS.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </Select>
+              options={TRANSITIONS.map((t) => ({ value: t, label: t }))}
+              onChange={(v) => props.onChange({ ...a, transition: v as Transition })}
+            />
           </Field>
         </>
       )}

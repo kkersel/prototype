@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import type { Prototype, PrototypeSummary } from '../types'
@@ -6,34 +6,52 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   EmptyState,
   Field,
   Icon,
   IconButton,
   Input,
   Modal,
-  Select,
+  Segmented,
+  type SegmentOption,
+  toast,
 } from '../components/ui'
 
-const PRESETS = [
-  { label: 'Портрет · 1080×1920', w: 1080, h: 1920 },
-  { label: 'Портрет · 720×1280', w: 720, h: 1280 },
-  { label: 'Квадрат · 1080×1080', w: 1080, h: 1080 },
-  { label: 'Квадрат · 720×720', w: 720, h: 720 },
-  { label: 'Альбом · 1280×720', w: 1280, h: 720 },
-]
+// Приоритетные модели терминалов с фиксированным разрешением экрана.
+const TERMINALS = [
+  { value: 'P10', label: 'P10', w: 720, h: 1600, icon: 'p10' },
+  { value: 'P12', label: 'P12', w: 720, h: 720, icon: 'p12' },
+] as const
+
+type TerminalId = (typeof TERMINALS)[number]['value']
+
+const TERMINAL_OPTIONS: SegmentOption<TerminalId>[] = TERMINALS.map((t) => ({
+  value: t.value,
+  label: t.label,
+  icon: t.icon,
+}))
+
+// Stable hue (0..360) from an id, so media-less cards get a distinct accent.
+const hueFromId = (id: string) => {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360
+  return h
+}
 
 export function Home() {
   const [items, setItems] = useState<PrototypeSummary[]>([])
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState('')
-  const [preset, setPreset] = useState(0)
+  const [terminal, setTerminal] = useState<TerminalId>('P10')
   const [useCustom, setUseCustom] = useState(false)
-  const [customW, setCustomW] = useState(1080)
-  const [customH, setCustomH] = useState(1920)
+  const [customW, setCustomW] = useState(720)
+  const [customH, setCustomH] = useState(1600)
   const [deleteTarget, setDeleteTarget] = useState<PrototypeSummary | null>(null)
   const nav = useNavigate()
   const importRef = useRef<HTMLInputElement>(null)
+
+  const term = TERMINALS.find((t) => t.value === terminal) ?? TERMINALS[0]
 
   const refresh = () => api.listPrototypes().then(setItems).catch(() => {})
   useEffect(() => {
@@ -43,7 +61,7 @@ export function Home() {
   const create = async () => {
     const canvas = useCustom
       ? { width: Math.max(1, customW), height: Math.max(1, customH) }
-      : { width: PRESETS[preset].w, height: PRESETS[preset].h }
+      : { width: term.w, height: term.h }
     const doc = await api.createPrototype(name.trim() || 'Новый прототип', canvas)
     nav(`/editor/${doc.id}`)
   }
@@ -61,7 +79,7 @@ export function Home() {
       const created = await api.importPrototype(doc)
       nav(`/editor/${created.id}`)
     } catch {
-      alert('Не удалось импортировать файл прототипа')
+      toast('Не удалось импортировать файл прототипа', 'error')
     }
   }
 
@@ -114,7 +132,20 @@ export function Home() {
               onClick={() => nav(`/editor/${it.id}`)}
             >
               <div className="proto-card__preview">
-                <Icon name="monitor" size={28} />
+                {it.thumb ? (
+                  it.thumbType === 'video' ? (
+                    <video src={it.thumb} muted playsInline preload="metadata" />
+                  ) : (
+                    <img src={it.thumb} alt="" loading="lazy" />
+                  )
+                ) : (
+                  <div
+                    className="proto-card__placeholder"
+                    style={{ '--seed': hueFromId(it.id) } as CSSProperties}
+                  >
+                    <Icon name="monitor" size={26} />
+                  </div>
+                )}
               </div>
               <div className="proto-card__body">
                 <div className="row between">
@@ -163,29 +194,24 @@ export function Home() {
           />
         </Field>
         <Field
-          label="Размер экрана"
-          hint="Задаёт пропорции холста. На терминале экран подгоняется автоматически."
+          label={useCustom ? 'Свой размер' : 'Терминал'}
+          hint={
+            useCustom
+              ? 'Произвольный размер холста в пикселях.'
+              : `Разрешение экрана ${term.w}×${term.h}. На терминале экран подгоняется автоматически.`
+          }
         >
           {!useCustom ? (
-            <Select value={preset} onChange={(e) => setPreset(Number(e.target.value))}>
-              {PRESETS.map((p, i) => (
-                <option key={i} value={i}>
-                  {p.label}
-                </option>
-              ))}
-            </Select>
+            <Segmented options={TERMINAL_OPTIONS} value={terminal} onChange={setTerminal} size="lg" />
           ) : (
             <div className="row">
-              <Input type="number" value={customW} onChange={(e) => setCustomW(Number(e.target.value))} />
+              <Input type="number" min={1} value={customW} onChange={(e) => setCustomW(Number(e.target.value))} />
               <span className="dim">×</span>
-              <Input type="number" value={customH} onChange={(e) => setCustomH(Number(e.target.value))} />
+              <Input type="number" min={1} value={customH} onChange={(e) => setCustomH(Number(e.target.value))} />
             </div>
           )}
         </Field>
-        <label className="row" style={{ gap: 'var(--space-2)' }}>
-          <input type="checkbox" checked={useCustom} onChange={(e) => setUseCustom(e.target.checked)} />
-          <span className="muted">Свой размер</span>
-        </label>
+        <Checkbox checked={useCustom} onChange={setUseCustom} label="Свой размер" />
       </Modal>
 
       <Modal
