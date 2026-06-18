@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../../api'
 import { drawHeatmap } from '../../heatmap'
+import { buildResultsHtml, exportResultsDeck } from '../../export'
 import type { Prototype, SessionInfo, TapEvent } from '../../types'
 import { Badge, Button, Checkbox, EmptyState, Field, Segmented, Slider, toast, type SegmentOption } from '../../components/ui'
 
@@ -38,6 +39,8 @@ export function HeatmapsView({
   const [mode, setMode] = useState<Mode>('heat')
   const [filter, setFilter] = useState<Filter>('all')
   const [radius, setRadius] = useState(30)
+  const [exporting, setExporting] = useState(false)
+  const [exportingPdf, setExportingPdf] = useState(false)
   const importRef = useRef<HTMLInputElement>(null)
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -128,6 +131,41 @@ export function HeatmapsView({
       loadSessions()
     } catch {
       toast('Не удалось импортировать файл результатов', 'error')
+    }
+  }
+
+  const onExport = async () => {
+    setExporting(true)
+    try {
+      const all = await api.getEvents(doc.id) // all screens, all sessions
+      await exportResultsDeck(doc, all, sessions)
+    } catch {
+      toast('Не удалось собрать презентацию', 'error')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const onExportPdf = async () => {
+    // open the print window synchronously (inside the click) so it isn't blocked
+    const win = window.open('', '_blank')
+    if (win) win.document.write('<!doctype html><meta charset="utf-8"><body style="font:16px sans-serif;padding:40px;color:#62666d">Готовим PDF…</body>')
+    setExportingPdf(true)
+    try {
+      const all = await api.getEvents(doc.id)
+      const html = await buildResultsHtml(doc, all, sessions, { autoPrint: true })
+      if (win) {
+        win.document.open()
+        win.document.write(html)
+        win.document.close()
+      } else {
+        toast('Разрешите всплывающие окна, чтобы сохранить PDF', 'error')
+      }
+    } catch {
+      win?.close()
+      toast('Не удалось собрать PDF', 'error')
+    } finally {
+      setExportingPdf(false)
     }
   }
 
@@ -273,6 +311,12 @@ export function HeatmapsView({
         </div>
 
         <div className="panel__section col">
+          <Button block variant="primary" icon="download" loading={exporting} onClick={onExport}>
+            {exporting ? 'Готовим…' : 'Презентация (HTML)'}
+          </Button>
+          <Button block icon="download" loading={exportingPdf} onClick={onExportPdf}>
+            {exportingPdf ? 'Готовим…' : 'Скачать PDF'}
+          </Button>
           <Button block icon="upload" onClick={() => importRef.current?.click()}>
             Импорт результатов
           </Button>
