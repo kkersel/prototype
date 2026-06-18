@@ -1,0 +1,128 @@
+/* Base: reset, typography, focus, scrollbars, small layout utilities. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: 1.45;
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior: none;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--accent-text);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+button {
+  font-family: inherit;
+}
+
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+
+::selection {
+  background: var(--accent-subtle);
+}
+
+/* Visible focus only for keyboard users. */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+/* Subtle scrollbars inside panels. */
+.scroll,
+.panel,
+.stage-wrap,
+.heat-canvas {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.scroll::-webkit-scrollbar,
+.panel::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.scroll::-webkit-scrollbar-thumb,
+.panel::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-pill);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+/* ---- layout utilities ---- */
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.wrap {
+  flex-wrap: wrap;
+}
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+.between {
+  justify-content: space-between;
+}
+.center {
+  align-items: center;
+  justify-content: center;
+}
+.muted {
+  color: var(--text-secondary);
+}
+.dim {
+  color: var(--text-tertiary);
+}
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hidden-input {
+  display: none;
+}
