@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { api } from '../api'
-import { enqueue, exportAll, pendingCount, startSync } from '../db'
+import * as local from '../local'
 import type { Action, Direction, Prototype, TapEvent, Transition } from '../types'
 import { Button, Field, Icon, Input, Sheet, SheetItem, Spinner } from '../components/ui'
 
@@ -18,7 +17,15 @@ const ANIM: Record<Transition, string> = {
   'push-left': 'anim-push-left',
 }
 
-export function Player() {
+export function Player({
+  prototype,
+  onEvent,
+}: {
+  // When provided (paired terminal), play this doc and stream events to onEvent
+  // instead of loading from / writing to the local store.
+  prototype?: Prototype
+  onEvent?: (ev: TapEvent) => void
+} = {}) {
   const { id } = useParams()
   const nav = useNavigate()
   const [doc, setDoc] = useState<Prototype | null>(null)
@@ -38,10 +45,9 @@ export function Player() {
   const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
-    if (id) api.getPrototype(id).then(setDoc).catch(() => {})
-  }, [id])
-
-  useEffect(() => startSync(), [])
+    if (prototype) setDoc(prototype)
+    else if (id) local.getPrototype(id).then(setDoc).catch(() => {})
+  }, [id, prototype])
 
   useEffect(() => {
     let lock: any
@@ -108,9 +114,10 @@ export function Player() {
         ts: Date.now(),
         ...partial,
       }
-      enqueue(ev).catch(() => {})
+      if (onEvent) onEvent(ev)
+      else local.appendEvents(ev.prototypeId, [ev]).catch(() => {})
     },
-    [doc, session]
+    [doc, session, onEvent]
   )
 
   const doAction = useCallback(
@@ -225,7 +232,7 @@ export function Player() {
   }
 
   const downloadResults = async () => {
-    const events = await exportAll()
+    const events = await local.readEvents(doc?.id || '')
     const blob = new Blob([JSON.stringify(events, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
@@ -342,7 +349,6 @@ export function Player() {
       />
 
       <Sheet open={menuOpen} title="Меню оператора" onClose={() => setMenuOpen(false)}>
-        <PendingBadge />
         <SheetItem icon="restart" onClick={restart}>
           Начать сначала
         </SheetItem>
@@ -365,33 +371,6 @@ export function Player() {
           Выйти из полноэкранного
         </SheetItem>
       </Sheet>
-    </div>
-  )
-}
-
-function PendingBadge() {
-  const [n, setN] = useState<number | null>(null)
-  const [online, setOnline] = useState(navigator.onLine)
-  useEffect(() => {
-    let alive = true
-    const tick = () => {
-      pendingCount().then((c) => alive && setN(c))
-      setOnline(navigator.onLine)
-    }
-    tick()
-    const t = setInterval(tick, 2000)
-    return () => {
-      alive = false
-      clearInterval(t)
-    }
-  }, [])
-  return (
-    <div
-      className="row center"
-      style={{ gap: 'var(--space-2)', color: 'var(--player-text-dim)', fontSize: 'var(--fs-ui)', marginBottom: 'var(--space-2)' }}
-    >
-      <Icon name={online ? 'wifi' : 'wifi-off'} size={16} />
-      {online ? 'в сети' : 'офлайн'} · не синхронизировано: {n ?? '…'}
     </div>
   )
 }

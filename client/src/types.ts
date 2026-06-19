@@ -4,7 +4,10 @@ export type MediaType = 'image' | 'video'
 
 export interface Media {
   type: MediaType
-  url: string
+  // Local-first: media blobs live in IndexedDB keyed by mediaId. `url` is a
+  // runtime object URL hydrated on load (or a legacy server URL).
+  mediaId?: string
+  url?: string
   name?: string
   mime?: string
 }

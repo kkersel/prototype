@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api } from '../../api'
+import * as local from '../../local'
 import { drawHeatmap } from '../../heatmap'
 import { buildResultsHtml, exportResultsDeck } from '../../export'
 import type { Prototype, SessionInfo, TapEvent } from '../../types'
@@ -57,7 +57,7 @@ export function HeatmapsView({
   }, [])
 
   const loadSessions = useCallback(() => {
-    api.getSessions(doc.id).then(setSessions).catch(() => {})
+    local.listSessions(doc.id).then(setSessions).catch(() => {})
   }, [doc.id])
   useEffect(() => {
     loadSessions()
@@ -66,7 +66,7 @@ export function HeatmapsView({
   useEffect(() => {
     if (!selScreen) return
     const sessionIds = allSessions ? undefined : [...selSessions]
-    api.getEvents(doc.id, { screen: selScreen, sessions: sessionIds }).then(setEvents).catch(() => {})
+    local.readEvents(doc.id, { screen: selScreen, sessions: sessionIds }).then(setEvents).catch(() => {})
   }, [doc.id, selScreen, selSessions, allSessions, sessions])
 
   const screen = doc.screens.find((s) => s.id === selScreen) || null
@@ -126,7 +126,7 @@ export function HeatmapsView({
     try {
       const arr = JSON.parse(await file.text()) as TapEvent[]
       if (!Array.isArray(arr)) throw new Error()
-      const res = await api.sendEvents(doc.id, arr)
+      const res = await local.appendEvents(doc.id, arr)
       toast(`Импортировано событий: ${res.added}`)
       loadSessions()
     } catch {
@@ -137,7 +137,7 @@ export function HeatmapsView({
   const onExport = async () => {
     setExporting(true)
     try {
-      const all = await api.getEvents(doc.id) // all screens, all sessions
+      const all = await local.readEvents(doc.id) // all screens, all sessions
       await exportResultsDeck(doc, all, sessions)
     } catch {
       toast('Не удалось собрать презентацию', 'error')
@@ -152,7 +152,7 @@ export function HeatmapsView({
     if (win) win.document.write('<!doctype html><meta charset="utf-8"><body style="font:16px sans-serif;padding:40px;color:#62666d">Готовим PDF…</body>')
     setExportingPdf(true)
     try {
-      const all = await api.getEvents(doc.id)
+      const all = await local.readEvents(doc.id)
       const html = await buildResultsHtml(doc, all, sessions, { autoPrint: true })
       if (win) {
         win.document.open()

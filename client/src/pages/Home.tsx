@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../api'
+import * as local from '../local'
 import type { Prototype, PrototypeSummary } from '../types'
 import {
   Badge,
@@ -53,7 +53,7 @@ export function Home() {
 
   const term = TERMINALS.find((t) => t.value === terminal) ?? TERMINALS[0]
 
-  const refresh = () => api.listPrototypes().then(setItems).catch(() => {})
+  const refresh = () => local.listPrototypes().then(setItems).catch(() => {})
   useEffect(() => {
     refresh()
   }, [])
@@ -62,13 +62,13 @@ export function Home() {
     const canvas = useCustom
       ? { width: Math.max(1, customW), height: Math.max(1, customH) }
       : { width: term.w, height: term.h }
-    const doc = await api.createPrototype(name.trim() || 'Новый прототип', canvas)
+    const doc = await local.createPrototype(name.trim() || 'Новый прототип', canvas)
     nav(`/editor/${doc.id}`)
   }
 
   const confirmDelete = async () => {
     if (!deleteTarget) return
-    await api.deletePrototype(deleteTarget.id)
+    await local.deletePrototype(deleteTarget.id)
     setDeleteTarget(null)
     refresh()
   }
@@ -76,7 +76,7 @@ export function Home() {
   const onImport = async (file: File) => {
     try {
       const doc = JSON.parse(await file.text()) as Prototype
-      const created = await api.importPrototype(doc)
+      const created = await local.importPrototype(doc)
       nav(`/editor/${created.id}`)
     } catch {
       toast('Не удалось импортировать файл прототипа', 'error')
@@ -93,6 +93,9 @@ export function Home() {
           </p>
         </div>
         <div className="row">
+          <Button icon="monitor" onClick={() => nav('/join')}>
+            Я терминал
+          </Button>
           <Button icon="upload" onClick={() => importRef.current?.click()}>
             Импорт
           </Button>

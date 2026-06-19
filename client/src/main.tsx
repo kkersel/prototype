@@ -4,6 +4,7 @@ import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 import { Home } from './pages/Home'
 import { Editor } from './pages/Editor'
 import { Player } from './pages/Player'
+import { Join } from './pages/Join'
 import { Toaster } from './components/ui'
 import './styles/index.css'
 
@@ -13,6 +14,8 @@ const router = createBrowserRouter([
   { path: '/play/:id', element: <Player /> },
   // Heatmaps is a view of the editor — deep-link opens it on the Карты tab.
   { path: '/heatmaps/:id', element: <Editor initialView="heat" /> },
+  // Terminal: pair with a laptop and run its scenario.
+  { path: '/join', element: <Join /> },
 ])
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

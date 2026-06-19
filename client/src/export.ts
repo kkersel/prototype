@@ -76,10 +76,11 @@ async function renderScreenImage(
   ctx.fillStyle = '#000'
   ctx.fillRect(0, 0, w, h)
   try {
-    if (screen.media?.type === 'image') {
-      ctx.drawImage(await loadImage(screen.media.url), 0, 0, w, h)
-    } else if (screen.media?.type === 'video') {
-      const v = await loadVideoFrame(screen.media.url)
+    const url = screen.media?.url
+    if (url && screen.media?.type === 'image') {
+      ctx.drawImage(await loadImage(url), 0, 0, w, h)
+    } else if (url && screen.media?.type === 'video') {
+      const v = await loadVideoFrame(url)
       if (v) ctx.drawImage(v, 0, 0, w, h)
     }
   } catch {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { api } from '../api'
+import * as local from '../local'
 import type { Action, Direction, Hotspot, Prototype, Screen, Transition } from '../types'
 import {
   Badge,
@@ -12,10 +12,12 @@ import {
   Icon,
   IconButton,
   Input,
+  Modal,
   Segmented,
   Select,
   type SegmentOption,
 } from '../components/ui'
+import { startHost, type HostHandle, type HostStatus } from '../pair'
 import { CanvasView } from './editor/CanvasView'
 import { HeatmapsView } from './editor/HeatmapsView'
 
@@ -90,14 +92,15 @@ export function Editor({ initialView }: { initialView?: View } = {}) {
   useEffect(
     () => () => {
       const d = docRef.current
-      if (d && JSON.stringify(d) !== lastSaved.current) api.savePrototype(d).catch(() => {})
+      if (d && JSON.stringify(d) !== lastSaved.current) local.savePrototype(d).catch(() => {})
     },
     []
   )
 
   useEffect(() => {
     if (!id) return
-    api.getPrototype(id).then((d) => {
+    local.getPrototype(id).then((d) => {
+      if (!d) return
       setDoc(d)
       const snap = JSON.stringify(d)
       lastSaved.current = snap
@@ -187,7 +190,7 @@ export function Editor({ initialView }: { initialView?: View } = {}) {
     if (snapshot === lastSaved.current) return
     setSaveState('saving')
     const t = setTimeout(async () => {
-      await api.savePrototype(doc)
+      await local.savePrototype(doc)
       lastSaved.current = snapshot
       setSaveState('saved')
     }, 600)
@@ -212,14 +215,14 @@ export function Editor({ initialView }: { initialView?: View } = {}) {
   )
 
   const addScreen = async (file: File) => {
-    const up = await api.upload(file)
+    const media = await local.addMedia(file)
     update((d) => {
       const s: Screen = {
         id: uid(),
         name: `Экран ${d.screens.length + 1}`,
-        media: { type: up.type, url: up.url, name: up.name, mime: up.mime },
+        media,
         hotspots: [],
-        videoAutoplay: up.type === 'video',
+        videoAutoplay: media.type === 'video',
         videoLoop: false,
       }
       d.screens.push(s)
@@ -229,10 +232,10 @@ export function Editor({ initialView }: { initialView?: View } = {}) {
   }
 
   const replaceMedia = async (sid: string, file: File) => {
-    const up = await api.upload(file)
+    const media = await local.addMedia(file)
     setScreen(sid, (s) => {
-      s.media = { type: up.type, url: up.url, name: up.name, mime: up.mime }
-      if (up.type === 'video' && s.videoAutoplay === undefined) s.videoAutoplay = true
+      s.media = media
+      if (media.type === 'video' && s.videoAutoplay === undefined) s.videoAutoplay = true
     })
   }
 
@@ -313,6 +316,53 @@ export function Editor({ initialView }: { initialView?: View } = {}) {
     setView('screen')
   }, [])
 
+  // --- pair a terminal (host this prototype over WebRTC) ---
+  const hostRef = useRef<HostHandle | null>(null)
+  const [hostCode, setHostCode] = useState<string | null>(null)
+  const [hostStatus, setHostStatus] = useState<HostStatus | null>(null)
+
+  useEffect(() => () => hostRef.current?.close(), [])
+
+  const startTerminal = () => {
+    if (hostRef.current) {
+      setHostCode(hostRef.current.code)
+      return
+    }
+    const h = startHost({
+      getScenario: async () => {
+        const d = structuredClone(docRef.current as Prototype)
+        const media: { mediaId: string; type: 'image' | 'video'; mime?: string; name?: string; buf: ArrayBuffer }[] = []
+        for (const s of d.screens) {
+          const mid = s.media?.mediaId
+          if (s.media) delete s.media.url
+          if (mid) {
+            const m = await local.mediaBlob(mid)
+            if (m) media.push({ mediaId: mid, type: m.type, mime: m.mime, name: m.name, buf: await m.blob.arrayBuffer() })
+          }
+        }
+        return { doc: d, media }
+      },
+      onStatus: (s) => {
+        setHostStatus(s)
+        setHostCode(hostRef.current?.code ?? null)
+      },
+      onEvents: (events) => {
+        const pid = docRef.current?.id
+        if (pid) local.appendEvents(pid, events).catch(() => {})
+      },
+    })
+    hostRef.current = h
+    setHostCode(h.code)
+    setHostStatus('starting')
+  }
+
+  const stopTerminal = () => {
+    hostRef.current?.close()
+    hostRef.current = null
+    setHostCode(null)
+    setHostStatus(null)
+  }
+
   if (!doc) return <div className="empty-state" style={{ height: '100vh' }}><span className="spinner" /></div>
 
   return (
@@ -327,6 +377,9 @@ export function Editor({ initialView }: { initialView?: View } = {}) {
         <IconButton icon="redo" label="Вернуть (⌘⇧Z)" disabled={!canRedo} onClick={redo} />
         <Button icon="download" onClick={exportJson}>
           Экспорт
+        </Button>
+        <Button icon="monitor" onClick={startTerminal}>
+          Терминал
         </Button>
         <Button variant="primary" icon="play" onClick={() => nav(`/play/${doc.id}`)}>
           Запустить
@@ -401,6 +454,34 @@ export function Editor({ initialView }: { initialView?: View } = {}) {
           />
         </>
       )}
+
+      <Modal
+        open={hostCode != null}
+        title="Подключение терминала"
+        onClose={stopTerminal}
+        footer={
+          <Button variant="ghost" onClick={stopTerminal}>
+            Отключить
+          </Button>
+        }
+      >
+        <p className="muted" style={{ marginBottom: 'var(--space-3)' }}>
+          На терминале открой этот же адрес → «Я терминал» и введи код:
+        </p>
+        <div className="pair-code">{hostCode}</div>
+        <div className="row center" style={{ gap: 'var(--space-2)', marginTop: 'var(--space-3)', fontSize: 'var(--fs-ui)' }}>
+          {hostStatus === 'waiting' && <span className="dim">Ожидание терминала…</span>}
+          {hostStatus === 'starting' && <span className="dim">Поднимаем сессию…</span>}
+          {hostStatus === 'connected' && <span className="dim">Терминал подключён, передаём сценарий…</span>}
+          {hostStatus === 'sending' && <span className="dim">Передаём медиа…</span>}
+          {hostStatus === 'ready' && (
+            <span style={{ color: 'var(--accent-text)' }}>
+              <Icon name="check" size={14} /> Сценарий на терминале — можно исследовать. Клики придут сюда.
+            </span>
+          )}
+          {hostStatus === 'error' && <span style={{ color: 'var(--danger, #e5484d)' }}>Ошибка соединения.</span>}
+        </div>
+      </Modal>
     </div>
   )
 }

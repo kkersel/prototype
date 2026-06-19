@@ -10,7 +10,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-export const DATA_DIR = path.join(__dirname, '..', 'data')
+// Where prototypes / events / uploads live. Override with DATA_DIR to point at a
+// mounted persistent volume when hosting (Render/Railway/Fly); defaults to the
+// repo's data/ for local runs.
+export const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(__dirname, '..', 'data')
 export const PROTO_DIR = path.join(DATA_DIR, 'prototypes')
 export const EVENT_DIR = path.join(DATA_DIR, 'events')
 export const UPLOAD_DIR = path.join(DATA_DIR, 'uploads')
