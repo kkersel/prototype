@@ -19,6 +19,21 @@ function makeCode(): string {
 const NS = 'tproto-'
 const peerId = (code: string) => NS + code
 
+// STUN finds the direct path; the free TURN relays packets when the network
+// blocks P2P (AP/client isolation, symmetric NAT) — common on phone/guest Wi-Fi.
+// On a clean LAN the connection stays direct; TURN is only a fallback.
+const PEER_OPTS = {
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+    ],
+  },
+}
+
 export type HostStatus = 'starting' | 'waiting' | 'connected' | 'sending' | 'ready' | 'error'
 export type JoinStatus = 'connecting' | 'receiving' | 'ready' | 'lost' | 'error'
 
@@ -60,7 +75,7 @@ export function startHost(opts: {
 
   const boot = (code: string) => {
     handle.code = code
-    peer = new Peer(peerId(code))
+    peer = new Peer(peerId(code), PEER_OPTS)
     handle.close = () => {
       closed = true
       try {
@@ -107,7 +122,7 @@ export function joinHost(
   code: string,
   opts: {
     onScenario: (doc: Prototype, mediaBlobs: Record<string, Blob>) => void
-    onStatus: (s: JoinStatus, info?: { received?: number; total?: number }) => void
+    onStatus: (s: JoinStatus, info?: { received?: number; total?: number; reason?: string }) => void
   }
 ): JoinHandle {
   let peer: Peer
@@ -146,10 +161,12 @@ export function joinHost(
         opts.onStatus('receiving', { received: Object.keys(blobs).length, total })
       } else if (msg?.t === 'scenario-end') {
         if (doc) {
+          gotScenario = true
+          clearTimeout(watchdog)
           opts.onScenario(doc, blobs)
           opts.onStatus('ready')
         } else {
-          opts.onStatus('error')
+          opts.onStatus('error', { reason: 'bad-scenario' })
         }
       }
     })
@@ -166,9 +183,16 @@ export function joinHost(
     wireConn(conn)
   }
 
-  peer = new Peer()
+  let gotScenario = false
+  // If nothing arrives in time, the network is likely blocking P2P — surface it
+  // instead of hanging on "Подключаемся…".
+  const watchdog = window.setTimeout(() => {
+    if (!gotScenario && !closed) opts.onStatus('error', { reason: 'timeout' })
+  }, 25000)
+
+  peer = new Peer(undefined as unknown as string, PEER_OPTS)
   peer.on('open', connect)
-  peer.on('error', () => !closed && opts.onStatus('error'))
+  peer.on('error', (e: { type?: string }) => !closed && opts.onStatus('error', { reason: e?.type || 'peer' }))
   peer.on('disconnected', () => {
     if (!closed) {
       try {
@@ -196,6 +220,7 @@ export function joinHost(
     close() {
       closed = true
       clearInterval(resend)
+      clearTimeout(watchdog)
       try {
         peer.destroy()
       } catch {}

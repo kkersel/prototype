@@ -11,6 +11,7 @@ export function Join() {
   const nav = useNavigate()
   const [code, setCode] = useState('')
   const [status, setStatus] = useState<JoinStatus | 'idle'>('idle')
+  const [reason, setReason] = useState<string | null>(null)
   const [progress, setProgress] = useState<{ received: number; total: number } | null>(null)
   const [doc, setDoc] = useState<Prototype | null>(null)
   const handleRef = useRef<JoinHandle | null>(null)
@@ -21,11 +22,14 @@ export function Join() {
     const c = code.trim().toUpperCase()
     if (c.length < 4) return
     setStatus('connecting')
+    setReason(null)
     handleRef.current?.close()
     handleRef.current = joinHost(c, {
       onStatus: (s, info) => {
         setStatus(s)
-        if (info) setProgress({ received: info.received || 0, total: info.total || 0 })
+        if (info?.reason) setReason(info.reason)
+        if (info && (info.received != null || info.total != null))
+          setProgress({ received: info.received || 0, total: info.total || 0 })
       },
       onScenario: (incoming, blobs) => {
         const hydrated = structuredClone(incoming)
@@ -69,7 +73,15 @@ export function Join() {
               {status === 'receiving' && (
                 <><Spinner /> Получаем сценарий… {progress && progress.total > 0 ? `${progress.received}/${progress.total}` : ''}</>
               )}
-              {status === 'error' && <span style={{ color: '#e5484d' }}>Не удалось подключиться. Проверь код.</span>}
+              {status === 'error' && (
+                <span style={{ color: '#e5484d', textAlign: 'center' }}>
+                  {reason === 'peer-unavailable'
+                    ? 'Хост не найден. Проверь код и что на ноутбуке открыт экран «Терминал».'
+                    : reason === 'timeout'
+                      ? 'Соединение не установилось — сеть, похоже, блокирует связь между устройствами. Попробуй ещё раз или другую Wi-Fi.'
+                      : `Не удалось подключиться${reason ? ` (${reason})` : ''}. Попробуй ещё раз.`}
+                </span>
+              )}
               {status === 'lost' && <span style={{ color: '#e5484d' }}>Связь потеряна. Попробуй ещё раз.</span>}
             </div>
           )}
