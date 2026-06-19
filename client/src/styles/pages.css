@@ -44,28 +44,36 @@
 /* "Connect a terminal" address banner — prominent on the authoring device. */
 .lan-banner {
   display: flex;
-  align-items: center;
-  gap: var(--space-4);
+  flex-direction: column;
+  gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
   margin-bottom: var(--space-6);
-  background: var(--bg-sunken);
+  background: var(--bg-surface);
   border-radius: var(--radius-lg);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.07);
 }
-.lan-banner__icon {
-  display: grid;
-  place-items: center;
-  width: 48px;
-  height: 48px;
-  border-radius: var(--radius-md);
-  background: var(--surface, #fff);
-  color: var(--accent-text, #0d99ff);
-  flex: none;
-}
-.lan-banner__text {
+.lan-banner__header {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.lan-banner__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex: none;
+  animation: lan-pulse 2.2s ease-in-out infinite;
+}
+@keyframes lan-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0.5); }
+  50%       { box-shadow: 0 0 0 6px rgba(34,197,94,0); }
+}
+.lan-banner__live {
+  font-size: var(--fs-ui);
+  font-weight: var(--fw-medium);
+  color: #22c55e;
 }
 .lan-banner__label {
   font-size: var(--fs-ui);
@@ -73,21 +81,29 @@
 }
 .lan-banner__urls {
   display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-4);
+  flex-direction: column;
+  gap: var(--space-2);
 }
 .lan-banner__url {
-  font-size: var(--fs-h1);
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-sunken);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--fs-h2);
   font-weight: var(--fw-bold);
   letter-spacing: 0.01em;
-  color: var(--accent-text, #0d99ff);
+  color: var(--accent-text);
   user-select: all;
 }
 .lan-banner__url-sub {
+  font-family: var(--font-mono);
   font-size: var(--fs-ui);
   color: var(--text-tertiary);
   user-select: all;
+  padding-left: var(--space-1);
 }
 .proto-card {
   display: flex;
@@ -685,20 +701,82 @@
   height: 100%;
   object-fit: contain;
 }
+/* Gate (entry form on the terminal): top-aligned + scrollable so the on-screen
+   keyboard can't cover the Run button, and sized up for finger input. */
+.player--gate {
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  padding: clamp(var(--space-8), 9vh, 96px) var(--space-5) var(--space-9);
+}
 .player__gate {
   position: relative;
   width: 100%;
-  max-width: 360px;
-  padding: var(--space-6);
+  max-width: 520px;
+  margin: 0 auto;
 }
 .player__gate-card {
   background: var(--player-surface);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg);
-  padding: var(--space-6);
+  padding: var(--space-8) var(--space-7);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-5);
+}
+.player__gate-head {
+  margin-bottom: var(--space-2);
+}
+.player__gate-title {
+  font-size: 32px;
+  line-height: 1.15;
+  font-weight: var(--fw-bold);
+}
+.player__gate-sub {
+  color: var(--player-text-dim);
+  font-size: var(--fs-body);
+  margin-top: var(--space-2);
+}
+.player__gate-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.player__gate-label {
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  color: var(--player-text-dim);
+}
+.player__gate-input.input {
+  height: 64px;
+  font-size: 19px;
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--player-border);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+.player--gate .player__gate-input.input:hover {
+  background: var(--player-surface-focus);
+  border-color: var(--player-text-dim);
+}
+.player--gate .player__gate-input.input:focus {
+  background: var(--player-surface-focus);
+  border-color: var(--accent);
+  /* soft accent backlight behind the field + a gentle ring */
+  box-shadow: 0 0 0 4px var(--player-focus-ring), 0 8px 30px -8px var(--player-focus-glow);
+}
+.player__gate-go.btn {
+  height: 68px;
+  font-size: 19px;
+  font-weight: var(--fw-semibold);
+  border-radius: var(--radius-lg);
+  margin-top: var(--space-2);
+}
+.player__gate-back.btn {
+  height: 52px;
+  font-size: var(--fs-body);
+  color: var(--player-text-dim);
 }
 .player__menu-corner {
   position: fixed;

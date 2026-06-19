@@ -38,6 +38,9 @@
   --player-surface: #15171c;
   --player-surface-2: #1d2027;
   --player-border: #2a2e37;
+  --player-surface-focus: #23262f;
+  --player-focus-ring: rgba(13, 153, 255, 0.18);
+  --player-focus-glow: rgba(13, 153, 255, 0.4);
   --player-text: #e8eaee;
   --player-text-dim: #9aa0ab;
 

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import * as local from '../local'
+import * as store from '../store'
 import type { Action, Direction, Prototype, TapEvent, Transition } from '../types'
-import { Button, Field, Icon, Input, Sheet, SheetItem, Spinner } from '../components/ui'
+import { Button, Icon, Sheet, SheetItem, Spinner } from '../components/ui'
 
 const uid = () => Math.random().toString(36).slice(2, 10)
 const SWIPE_THRESHOLD = 40
@@ -50,7 +50,7 @@ export function Player({
 
   useEffect(() => {
     if (prototype) setDoc(prototype)
-    else if (id) local.getPrototype(id).then(setDoc).catch(() => {})
+    else if (id) store.getPrototype(id).then(setDoc).catch(() => {})
   }, [id, prototype])
 
   useEffect(() => {
@@ -119,7 +119,7 @@ export function Player({
         ...partial,
       }
       if (onEvent) onEvent(ev)
-      else local.appendEvents(ev.prototypeId, [ev]).catch(() => {})
+      else store.appendEvents(ev.prototypeId, [ev]).catch(() => {})
     },
     [doc, session, onEvent]
   )
@@ -236,7 +236,7 @@ export function Player({
   }
 
   const downloadResults = async () => {
-    const events = await local.readEvents(doc?.id || '')
+    const events = await store.readEvents(doc?.id || '')
     const blob = new Blob([JSON.stringify(events, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
@@ -280,35 +280,44 @@ export function Player({
 
   if (!started) {
     return (
-      <div className="player">
+      <div className="player player--gate">
         <div className="player__gate">
           <div className="player__gate-card">
-            <div>
-              <h2 style={{ fontSize: 'var(--fs-h1)', fontWeight: 'var(--fw-bold)' }}>{doc.name}</h2>
-              <p style={{ color: 'var(--player-text-dim)', fontSize: 'var(--fs-ui)', marginTop: 4 }}>
+            <div className="player__gate-head">
+              <h2 className="player__gate-title">{doc.name}</h2>
+              <p className="player__gate-sub">
                 {doc.screens.length} экран(ов). Заполни метки (необязательно) и запускай тест.
               </p>
             </div>
-            <Field>
-              <Input
-                placeholder="Участник / тестировщик"
+            <label className="player__gate-field">
+              <span className="player__gate-label">Участник / тестировщик</span>
+              <input
+                className="input player__gate-input"
+                placeholder="Имя или роль"
                 value={participant}
                 onChange={(e) => setParticipant(e.target.value)}
               />
-            </Field>
-            <Field>
-              <Input
-                placeholder="Метка терминала (напр. «касса-1»)"
+            </label>
+            <label className="player__gate-field">
+              <span className="player__gate-label">Метка терминала</span>
+              <input
+                className="input player__gate-input"
+                placeholder="Напр. «касса-1»"
                 value={device}
                 onChange={(e) => setDevice(e.target.value)}
               />
-            </Field>
-            <Button variant="primary" icon="play" block onClick={begin} style={{ height: 'var(--control-h-lg)' }}>
+            </label>
+            <Button
+              variant="primary"
+              icon="play"
+              block
+              onClick={begin}
+              className="player__gate-go"
+            >
               Запустить во весь экран
             </Button>
             <button
-              className="btn btn--ghost"
-              style={{ color: 'var(--player-text-dim)' }}
+              className="btn btn--ghost player__gate-back"
               onClick={() => (onExit ? onExit() : nav('/'))}
             >
               {onExit ? 'К списку сценариев' : 'На главную'}

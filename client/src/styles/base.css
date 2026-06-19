@@ -22,6 +22,15 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overscroll-behavior: none;
+  user-select: none;
+}
+
+/* Re-enable selection where users actually need it. */
+input,
+textarea,
+[contenteditable],
+code {
+  user-select: text;
 }
 
 h1,

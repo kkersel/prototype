@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import * as local from '../local'
+import * as store from '../store'
 import type { Action, Direction, Hotspot, Prototype, Screen, Transition } from '../types'
 import {
   Badge,
@@ -90,14 +90,14 @@ export function Editor({ initialView }: { initialView?: View } = {}) {
   useEffect(
     () => () => {
       const d = docRef.current
-      if (d && JSON.stringify(d) !== lastSaved.current) local.savePrototype(d).catch(() => {})
+      if (d && JSON.stringify(d) !== lastSaved.current) store.savePrototype(d).catch(() => {})
     },
     []
   )
 
   useEffect(() => {
     if (!id) return
-    local.getPrototype(id).then((d) => {
+    store.getPrototype(id).then((d) => {
       if (!d) return
       setDoc(d)
       const snap = JSON.stringify(d)
@@ -188,7 +188,7 @@ export function Editor({ initialView }: { initialView?: View } = {}) {
     if (snapshot === lastSaved.current) return
     setSaveState('saving')
     const t = setTimeout(async () => {
-      await local.savePrototype(doc)
+      await store.savePrototype(doc)
       lastSaved.current = snapshot
       setSaveState('saved')
     }, 600)
@@ -212,25 +212,27 @@ export function Editor({ initialView }: { initialView?: View } = {}) {
     [update]
   )
 
-  const addScreen = async (file: File) => {
-    const media = await local.addMedia(file)
+  const addScreen = async (files: File[]) => {
+    const medias = await Promise.all(files.map((f) => store.addMedia(f)))
     update((d) => {
-      const s: Screen = {
-        id: uid(),
-        name: `Экран ${d.screens.length + 1}`,
-        media,
-        hotspots: [],
-        videoAutoplay: media.type === 'video',
-        videoLoop: false,
+      for (const media of medias) {
+        const s: Screen = {
+          id: uid(),
+          name: `Экран ${d.screens.length + 1}`,
+          media,
+          hotspots: [],
+          videoAutoplay: media.type === 'video',
+          videoLoop: false,
+        }
+        d.screens.push(s)
+        if (!d.startScreenId) d.startScreenId = s.id
       }
-      d.screens.push(s)
-      if (!d.startScreenId) d.startScreenId = s.id
       return d
     })
   }
 
   const replaceMedia = async (sid: string, file: File) => {
-    const media = await local.addMedia(file)
+    const media = await store.addMedia(file)
     setScreen(sid, (s) => {
       s.media = media
       if (media.type === 'video' && s.videoAutoplay === undefined) s.videoAutoplay = true
@@ -329,8 +331,8 @@ export function Editor({ initialView }: { initialView?: View } = {}) {
         <Button icon="download" onClick={exportJson}>
           Экспорт
         </Button>
-        <Button variant="primary" icon="play" onClick={() => nav(`/play/${doc.id}`)}>
-          Запустить
+        <Button icon="play" onClick={() => nav(`/play/${doc.id}`)}>
+          Смотреть превью
         </Button>
       </div>
 
@@ -399,6 +401,8 @@ export function Editor({ initialView }: { initialView?: View } = {}) {
                 s.hotspots = s.hotspots.filter((h) => h.id !== hid)
               })
             }
+            onSetStart={(sid) => update((d) => ((d.startScreenId = sid), d))}
+            onRemove={removeScreen}
           />
         </>
       )}
@@ -495,7 +499,7 @@ function ScreenPanel(props: {
   doc: Prototype
   sel: string | null
   onSelect: (id: string) => void
-  onAdd: (file: File) => void
+  onAdd: (files: File[]) => void
   onRemove: (id: string) => void
   onMove: (id: string, dir: -1 | 1) => void
   onSetStart: (id: string) => void
@@ -517,10 +521,11 @@ function ScreenPanel(props: {
           ref={fileRef}
           type="file"
           accept="image/*,video/*"
+          multiple
           className="hidden-input"
           onChange={(e) => {
-            const f = e.target.files?.[0]
-            if (f) props.onAdd(f)
+            const files = Array.from(e.target.files ?? [])
+            if (files.length) props.onAdd(files)
             e.target.value = ''
           }}
         />
@@ -560,16 +565,6 @@ function ScreenPanel(props: {
         ))}
       </div>
 
-      {props.sel && (
-        <div className="panel__section col">
-          <Button block onClick={() => props.onSetStart(props.sel!)}>
-            Сделать стартовым
-          </Button>
-          <Button block variant="danger" icon="trash" onClick={() => props.onRemove(props.sel!)}>
-            Удалить экран
-          </Button>
-        </div>
-      )}
     </div>
   )
 }
@@ -799,6 +794,8 @@ function RightPanel(props: {
   onReplaceMedia: (sid: string, file: File) => void
   onSelectHotspot: (id: string | null) => void
   onDeleteHotspot: (hid: string) => void
+  onSetStart: (sid: string) => void
+  onRemove: (sid: string) => void
 }) {
   const replaceRef = useRef<HTMLInputElement>(null)
   const { screen } = props
@@ -875,6 +872,14 @@ function RightPanel(props: {
             e.target.value = ''
           }}
         />
+        {props.doc.startScreenId !== screen.id && (
+          <Button block onClick={() => props.onSetStart(screen.id)}>
+            Сделать экран стартовым
+          </Button>
+        )}
+        <Button block variant="danger" icon="trash" onClick={() => props.onRemove(screen.id)}>
+          Удалить экран
+        </Button>
       </div>
 
       {screen.media?.type === 'video' && (

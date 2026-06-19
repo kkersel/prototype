@@ -23,8 +23,9 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return
   const url = new URL(request.url)
   if (url.origin !== self.location.origin) return
-  // Never cache event writes/reads — heatmap data must stay fresh.
-  if (url.pathname.startsWith('/api/') && url.pathname.includes('/events')) return
+  // Never cache the API — the server is a shared source of truth, so prototype
+  // lists, docs and heatmap events must always come fresh over the network.
+  if (url.pathname.startsWith('/api/')) return
 
   // Navigations: network-first, fall back to cached shell so the player can
   // cold-start offline once it has been opened online at least once.

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import * as local from '../../local'
+import * as store from '../../store'
 import { drawHeatmap } from '../../heatmap'
 import { buildResultsHtml, exportResultsDeck } from '../../export'
 import type { Prototype, SessionInfo, TapEvent } from '../../types'
@@ -39,6 +39,7 @@ export function HeatmapsView({
   const [mode, setMode] = useState<Mode>('heat')
   const [filter, setFilter] = useState<Filter>('all')
   const [radius, setRadius] = useState(30)
+  const initDone = useRef(false)
   const [exporting, setExporting] = useState(false)
   const [exportingPdf, setExportingPdf] = useState(false)
   const importRef = useRef<HTMLInputElement>(null)
@@ -57,26 +58,25 @@ export function HeatmapsView({
   }, [])
 
   const loadSessions = useCallback(() => {
-    local.listSessions(doc.id).then(setSessions).catch(() => {})
+    store.listSessions(doc.id).then(setSessions).catch(() => {})
   }, [doc.id])
   useEffect(() => {
     loadSessions()
   }, [loadSessions])
 
-  // Live updates: when taps stream in (e.g. from a terminal) re-read sessions,
-  // which cascades to the events reload + canvas redraw below — no manual refresh.
-  useEffect(
-    () =>
-      local.onResultsChanged((pid) => {
-        if (pid === doc.id) loadSessions()
-      }),
-    [doc.id, loadSessions]
-  )
+  // Live updates: the server is the shared source of truth, so poll for new
+  // sessions while this view is open — taps streamed in from terminals appear
+  // within a few seconds. Re-reading sessions cascades to the events reload +
+  // canvas redraw below; the manual «Обновить» button forces an immediate pull.
+  useEffect(() => {
+    const t = setInterval(loadSessions, 4000)
+    return () => clearInterval(t)
+  }, [loadSessions])
 
   useEffect(() => {
     if (!selScreen) return
     const sessionIds = allSessions ? undefined : [...selSessions]
-    local.readEvents(doc.id, { screen: selScreen, sessions: sessionIds }).then(setEvents).catch(() => {})
+    store.readEvents(doc.id, { screen: selScreen, sessions: sessionIds }).then(setEvents).catch(() => {})
   }, [doc.id, selScreen, selSessions, allSessions, sessions])
 
   const screen = doc.screens.find((s) => s.id === selScreen) || null
@@ -92,6 +92,16 @@ export function HeatmapsView({
     }
     return { w: Math.round(w), h: Math.round(h) }
   }, [box, aspect])
+
+  // ~4.5mm finger radius on a ~57mm-wide physical P10 screen (720px → 57mm → 12.6 px/mm).
+  const fingerRadius = useMemo(() => Math.max(10, Math.round(dims.w * 0.079)), [dims.w])
+
+  useEffect(() => {
+    if (!initDone.current && box.w > 0) {
+      setRadius(fingerRadius)
+      initDone.current = true
+    }
+  }, [box.w, fingerRadius])
 
   const filtered = useMemo(
     () => events.filter((e) => (filter === 'all' ? true : filter === 'hit' ? e.hit : !e.hit)),
@@ -136,7 +146,7 @@ export function HeatmapsView({
     try {
       const arr = JSON.parse(await file.text()) as TapEvent[]
       if (!Array.isArray(arr)) throw new Error()
-      const res = await local.appendEvents(doc.id, arr)
+      const res = await store.appendEvents(doc.id, arr)
       toast(`Импортировано событий: ${res.added}`)
       loadSessions()
     } catch {
@@ -147,7 +157,7 @@ export function HeatmapsView({
   const onExport = async () => {
     setExporting(true)
     try {
-      const all = await local.readEvents(doc.id) // all screens, all sessions
+      const all = await store.readEvents(doc.id) // all screens, all sessions
       await exportResultsDeck(doc, all, sessions)
     } catch {
       toast('Не удалось собрать презентацию', 'error')
@@ -162,7 +172,7 @@ export function HeatmapsView({
     if (win) win.document.write('<!doctype html><meta charset="utf-8"><body style="font:16px sans-serif;padding:40px;color:#62666d">Готовим PDF…</body>')
     setExportingPdf(true)
     try {
-      const all = await local.readEvents(doc.id)
+      const all = await store.readEvents(doc.id)
       const html = await buildResultsHtml(doc, all, sessions, { autoPrint: true })
       if (win) {
         win.document.open()
@@ -266,9 +276,25 @@ export function HeatmapsView({
             <Segmented options={FILTER_OPTIONS} value={filter} onChange={setFilter} />
           </Field>
           {mode === 'heat' && (
-            <Field label="Радиус">
+            <div className="col" style={{ gap: 'var(--space-1)' }}>
+              <div className="row between">
+                <span className="field__label">Радиус</span>
+                <span className="dim" style={{ fontSize: 'var(--fs-ui)' }}>{radius}px</span>
+              </div>
               <Slider min={10} max={70} value={radius} onChange={setRadius} ariaLabel="Радиус" />
-            </Field>
+              <div className="row between">
+                <span className="dim" style={{ fontSize: 'var(--fs-ui)' }}>Палец ≈ {fingerRadius}px</span>
+                {radius !== fingerRadius && (
+                  <button
+                    className="dim"
+                    style={{ fontSize: 'var(--fs-ui)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline' }}
+                    onClick={() => setRadius(fingerRadius)}
+                  >
+                    сбросить
+                  </button>
+                )}
+              </div>
+            </div>
           )}
         </div>
 
@@ -302,7 +328,14 @@ export function HeatmapsView({
                     <span className="session-row__main">
                       <span className="session-dot" style={{ background: SESSION_COLORS[i % SESSION_COLORS.length] }} />
                       <span className="grow truncate">{s.participant || s.device || 'сессия'}</span>
-                      <span className="dim">{s.count}</span>
+                      <span className="col" style={{ alignItems: 'flex-end', gap: 2, flexShrink: 0 }}>
+                        <span className="dim" style={{ fontSize: 'var(--fs-ui)', lineHeight: 1 }}>{s.count}</span>
+                        <span className="dim" style={{ fontSize: 10, lineHeight: 1 }}>
+                          {new Date(s.firstTs).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
+                          {' '}
+                          {new Date(s.firstTs).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </span>
                     </span>
                   }
                 />
@@ -321,11 +354,11 @@ export function HeatmapsView({
         </div>
 
         <div className="panel__section col">
-          <Button block variant="primary" icon="download" loading={exporting} onClick={onExport}>
-            {exporting ? 'Готовим…' : 'Презентация (HTML)'}
-          </Button>
-          <Button block icon="download" loading={exportingPdf} onClick={onExportPdf}>
+          <Button block variant="primary" icon="download" loading={exportingPdf} onClick={onExportPdf}>
             {exportingPdf ? 'Готовим…' : 'Скачать PDF'}
+          </Button>
+          <Button block icon="download" loading={exporting} onClick={onExport}>
+            {exporting ? 'Готовим…' : 'Презентация (HTML)'}
           </Button>
           <Button block icon="upload" onClick={() => importRef.current?.click()}>
             Импорт результатов

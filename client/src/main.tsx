@@ -4,7 +4,6 @@ import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 import { Home } from './pages/Home'
 import { Editor } from './pages/Editor'
 import { Player } from './pages/Player'
-import * as broadcast from './broadcast'
 import { Toaster } from './components/ui'
 import './styles/index.css'
 
@@ -15,17 +14,6 @@ const router = createBrowserRouter([
   // Heatmaps is a view of the editor — deep-link opens it on the Карты tab.
   { path: '/heatmaps/:id', element: <Editor initialView="heat" /> },
 ])
-
-// When served from the laptop's own server (not Vercel static), become
-// discoverable to terminals automatically — no button to press. The capability
-// check: /pair/info returns JSON only on the real server; on Vercel the SPA
-// fallback returns HTML and this quietly no-ops.
-fetch('/pair/info')
-  .then((r) => r.json())
-  .then((d) => {
-    if (Array.isArray(d?.urls)) broadcast.start()
-  })
-  .catch(() => {})
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

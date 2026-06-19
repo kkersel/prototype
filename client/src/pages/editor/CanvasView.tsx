@@ -8,7 +8,6 @@ import {
   getBezierPath,
   Handle,
   MarkerType,
-  MiniMap,
   Position,
   ReactFlow,
   ReactFlowProvider,
@@ -437,7 +436,6 @@ function CanvasInner(props: CanvasProps) {
     >
       <Background variant={BackgroundVariant.Dots} gap={18} size={1.5} color="#d3d7e0" />
       <Controls showInteractive={false} />
-      <MiniMap pannable zoomable nodeColor="#cdd2db" maskColor="rgba(20,24,33,0.06)" />
     </ReactFlow>
   )
 }
