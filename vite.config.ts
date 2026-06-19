@@ -15,6 +15,7 @@ export default defineConfig({
     proxy: {
       '/api': `http://localhost:${SERVER_PORT}`,
       '/uploads': `http://localhost:${SERVER_PORT}`,
+      '/pair': `http://localhost:${SERVER_PORT}`,
     },
   },
   build: {

@@ -208,6 +208,17 @@ export async function importPrototype(
 }
 
 // ---- events / results -------------------------------------------------------
+// Live updates: anything that watches results (the heatmap view) subscribes here
+// and re-reads when new events land — e.g. taps streamed in from a terminal.
+type ResultsListener = (prototypeId: string) => void
+const resultsListeners = new Set<ResultsListener>()
+export function onResultsChanged(cb: ResultsListener): () => void {
+  resultsListeners.add(cb)
+  return () => {
+    resultsListeners.delete(cb)
+  }
+}
+
 /** Append events (dedup by id). Returns how many were newly added. */
 export async function appendEvents(prototypeId: string, events: TapEvent[]): Promise<{ added: number }> {
   if (!events?.length) return { added: 0 }
@@ -220,7 +231,10 @@ export async function appendEvents(prototypeId: string, events: TapEvent[]): Pro
     const finish = () => {
       if (done) return
       done = true
-      store.transaction.oncomplete = () => resolve({ added })
+      store.transaction.oncomplete = () => {
+        if (added > 0) for (const l of resultsListeners) l(prototypeId)
+        resolve({ added })
+      }
       store.transaction.onerror = () => reject(store.transaction.error)
     }
     for (const e of events) {

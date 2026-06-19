@@ -20,11 +20,15 @@ const ANIM: Record<Transition, string> = {
 export function Player({
   prototype,
   onEvent,
+  onExit,
 }: {
   // When provided (paired terminal), play this doc and stream events to onEvent
   // instead of loading from / writing to the local store.
   prototype?: Prototype
   onEvent?: (ev: TapEvent) => void
+  // When provided (paired terminal), "back" returns to the scenario list instead
+  // of navigating to the home route.
+  onExit?: () => void
 } = {}) {
   const { id } = useParams()
   const nav = useNavigate()
@@ -305,9 +309,9 @@ export function Player({
             <button
               className="btn btn--ghost"
               style={{ color: 'var(--player-text-dim)' }}
-              onClick={() => nav('/')}
+              onClick={() => (onExit ? onExit() : nav('/'))}
             >
-              На главную
+              {onExit ? 'К списку сценариев' : 'На главную'}
             </button>
           </div>
         </div>
@@ -352,6 +356,18 @@ export function Player({
         <SheetItem icon="restart" onClick={restart}>
           Начать сначала
         </SheetItem>
+        {onExit && (
+          <SheetItem
+            icon="arrow-left"
+            onClick={() => {
+              document.exitFullscreen?.().catch(() => {})
+              setMenuOpen(false)
+              onExit()
+            }}
+          >
+            К списку сценариев
+          </SheetItem>
+        )}
         <SheetItem icon="user-plus" onClick={newSession}>
           Новая сессия / участник
         </SheetItem>

@@ -12,12 +12,10 @@ import {
   Icon,
   IconButton,
   Input,
-  Modal,
   Segmented,
   Select,
   type SegmentOption,
 } from '../components/ui'
-import { startHost, type HostHandle, type HostStatus } from '../pair'
 import { CanvasView } from './editor/CanvasView'
 import { HeatmapsView } from './editor/HeatmapsView'
 
@@ -316,53 +314,6 @@ export function Editor({ initialView }: { initialView?: View } = {}) {
     setView('screen')
   }, [])
 
-  // --- pair a terminal (host this prototype over WebRTC) ---
-  const hostRef = useRef<HostHandle | null>(null)
-  const [hostCode, setHostCode] = useState<string | null>(null)
-  const [hostStatus, setHostStatus] = useState<HostStatus | null>(null)
-
-  useEffect(() => () => hostRef.current?.close(), [])
-
-  const startTerminal = () => {
-    if (hostRef.current) {
-      setHostCode(hostRef.current.code)
-      return
-    }
-    const h = startHost({
-      getScenario: async () => {
-        const d = structuredClone(docRef.current as Prototype)
-        const media: { mediaId: string; type: 'image' | 'video'; mime?: string; name?: string; buf: ArrayBuffer }[] = []
-        for (const s of d.screens) {
-          const mid = s.media?.mediaId
-          if (s.media) delete s.media.url
-          if (mid) {
-            const m = await local.mediaBlob(mid)
-            if (m) media.push({ mediaId: mid, type: m.type, mime: m.mime, name: m.name, buf: await m.blob.arrayBuffer() })
-          }
-        }
-        return { doc: d, media }
-      },
-      onStatus: (s) => {
-        setHostStatus(s)
-        setHostCode(hostRef.current?.code ?? null)
-      },
-      onEvents: (events) => {
-        const pid = docRef.current?.id
-        if (pid) local.appendEvents(pid, events).catch(() => {})
-      },
-    })
-    hostRef.current = h
-    setHostCode(h.code)
-    setHostStatus('starting')
-  }
-
-  const stopTerminal = () => {
-    hostRef.current?.close()
-    hostRef.current = null
-    setHostCode(null)
-    setHostStatus(null)
-  }
-
   if (!doc) return <div className="empty-state" style={{ height: '100vh' }}><span className="spinner" /></div>
 
   return (
@@ -377,9 +328,6 @@ export function Editor({ initialView }: { initialView?: View } = {}) {
         <IconButton icon="redo" label="Вернуть (⌘⇧Z)" disabled={!canRedo} onClick={redo} />
         <Button icon="download" onClick={exportJson}>
           Экспорт
-        </Button>
-        <Button icon="monitor" onClick={startTerminal}>
-          Терминал
         </Button>
         <Button variant="primary" icon="play" onClick={() => nav(`/play/${doc.id}`)}>
           Запустить
@@ -455,33 +403,6 @@ export function Editor({ initialView }: { initialView?: View } = {}) {
         </>
       )}
 
-      <Modal
-        open={hostCode != null}
-        title="Подключение терминала"
-        onClose={stopTerminal}
-        footer={
-          <Button variant="ghost" onClick={stopTerminal}>
-            Отключить
-          </Button>
-        }
-      >
-        <p className="muted" style={{ marginBottom: 'var(--space-3)' }}>
-          На терминале открой этот же адрес → «Я терминал» и введи код:
-        </p>
-        <div className="pair-code">{hostCode}</div>
-        <div className="row center" style={{ gap: 'var(--space-2)', marginTop: 'var(--space-3)', fontSize: 'var(--fs-ui)' }}>
-          {hostStatus === 'waiting' && <span className="dim">Ожидание терминала…</span>}
-          {hostStatus === 'starting' && <span className="dim">Поднимаем сессию…</span>}
-          {hostStatus === 'connected' && <span className="dim">Терминал подключён, передаём сценарий…</span>}
-          {hostStatus === 'sending' && <span className="dim">Передаём медиа…</span>}
-          {hostStatus === 'ready' && (
-            <span style={{ color: 'var(--accent-text)' }}>
-              <Icon name="check" size={14} /> Сценарий на терминале — можно исследовать. Клики придут сюда.
-            </span>
-          )}
-          {hostStatus === 'error' && <span style={{ color: 'var(--danger, #e5484d)' }}>Ошибка соединения.</span>}
-        </div>
-      </Modal>
     </div>
   )
 }

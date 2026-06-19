@@ -1,41 +1,35 @@
-// Laptop ↔ terminal pairing over WebRTC (PeerJS). The laptop hosts a session
-// under a short code; the terminal joins by code. Same Wi-Fi → the data channel
-// connects directly (no TURN). PeerJS's cloud only brokers the SDP/ICE handshake;
-// the scenario (prototype + media blobs) and the click events travel P2P.
-import Peer, { type DataConnection } from 'peerjs'
+// Laptop ↔ terminal pairing over the LOCAL network — no WebRTC, no external
+// services, no code to type. Both devices open the laptop's own server URL
+// (http://<ip>:5174); that server brokers a session "room" (see server/index.js
+// `/pair`). The laptop (host) publishes its scenario list; a terminal discovers
+// it via GET /pair/hosts and picks a scenario to run. Control messages go over
+// SSE (server→client) + POST (client→server); media blobs travel as raw binary
+// PUT/GET. Rock-solid on a shared Wi-Fi because the only thing in the middle is
+// the laptop itself.
+//
+// This module holds the transport + the terminal (join) side. The laptop (host)
+// side lives in broadcast.ts as an app-wide singleton (so it survives route
+// changes while the moderator edits prototypes).
 import type { Prototype, TapEvent } from './types'
 
-const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // no ambiguous 0/O/1/I
-const CODE_LEN = 6
-function makeCode(): string {
+const ID_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // no ambiguous 0/O/1/I
+const ID_LEN = 6
+/** A short, internal session id (never shown to the user — discovery is automatic). */
+export function makeId(): string {
   let s = ''
-  const a = crypto.getRandomValues(new Uint32Array(CODE_LEN))
-  for (let i = 0; i < CODE_LEN; i++) s += CODE_ALPHABET[a[i] % CODE_ALPHABET.length]
+  const a = crypto.getRandomValues(new Uint32Array(ID_LEN))
+  for (let i = 0; i < ID_LEN; i++) s += ID_ALPHABET[a[i] % ID_ALPHABET.length]
   return s
 }
 
-// PeerJS namespaces ids globally on its public server; prefix to avoid clashes
-// with other apps using short codes.
-const NS = 'tproto-'
-const peerId = (code: string) => NS + code
-
-// STUN finds the direct path; the free TURN relays packets when the network
-// blocks P2P (AP/client isolation, symmetric NAT) — common on phone/guest Wi-Fi.
-// On a clean LAN the connection stays direct; TURN is only a fallback.
-const PEER_OPTS = {
-  config: {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-    ],
-  },
+/** POST a control message to the relay; the server forwards it to the peer role. */
+export function post(code: string, role: 'host' | 'join', msg: unknown) {
+  return fetch(`/pair/${code}/${role}/msg`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(msg),
+  }).catch(() => {})
 }
-
-export type HostStatus = 'starting' | 'waiting' | 'connected' | 'sending' | 'ready' | 'error'
-export type JoinStatus = 'connecting' | 'receiving' | 'ready' | 'lost' | 'error'
 
 export interface MediaPart {
   mediaId: string
@@ -45,185 +39,153 @@ export interface MediaPart {
   buf: ArrayBuffer
 }
 
-export interface HostHandle {
-  code: string
-  close(): void
+export interface HostInfo {
+  hostId: string
+  name: string
+  prototypes: { id: string; name: string; screenCount: number }[]
 }
 
-// ---- laptop (host) ----------------------------------------------------------
-export function startHost(opts: {
-  getScenario: () => Promise<{ doc: Prototype; media: MediaPart[] }>
-  onStatus: (s: HostStatus, info?: { sent?: number; total?: number }) => void
-  onEvents: (events: TapEvent[]) => void
-}): HostHandle {
-  let peer: Peer
-  let closed = false
-  const handle: HostHandle = { code: makeCode(), close: () => {} }
+export type JoinStatus = 'searching' | 'receiving' | 'ready' | 'error'
 
-  const sendScenario = async (conn: DataConnection) => {
-    const { doc, media } = await opts.getScenario()
-    conn.send({ t: 'scenario', doc, mediaCount: media.length })
-    let sent = 0
-    for (const m of media) {
-      opts.onStatus('sending', { sent, total: media.length })
-      conn.send({ t: 'media', mediaId: m.mediaId, mtype: m.type, mime: m.mime, name: m.name, buf: m.buf })
-      sent++
-    }
-    conn.send({ t: 'scenario-end' })
-    opts.onStatus('ready', { sent, total: media.length })
-  }
-
-  const boot = (code: string) => {
-    handle.code = code
-    peer = new Peer(peerId(code), PEER_OPTS)
-    handle.close = () => {
-      closed = true
-      try {
-        peer.destroy()
-      } catch {}
-    }
-    peer.on('open', () => !closed && opts.onStatus('waiting'))
-    peer.on('error', (err: { type?: string }) => {
-      if (closed) return
-      if (err?.type === 'unavailable-id') {
-        try {
-          peer.destroy()
-        } catch {}
-        boot(makeCode()) // code taken — pick another
-      } else {
-        opts.onStatus('error')
-      }
-    })
-    peer.on('connection', (conn) => {
-      conn.on('open', () => {
-        opts.onStatus('connected')
-        sendScenario(conn).catch(() => opts.onStatus('error'))
-      })
-      conn.on('data', (raw) => {
-        const msg = raw as { t?: string; events?: TapEvent[] }
-        if (msg?.t === 'events' && Array.isArray(msg.events)) opts.onEvents(msg.events)
-      })
-      conn.on('close', () => !closed && opts.onStatus('waiting'))
-    })
-  }
-
-  opts.onStatus('starting')
-  boot(handle.code)
-  return handle
+export interface JoinHandle {
+  /** Ask a discovered host to stream a specific prototype. */
+  request(hostId: string, prototypeId: string): void
+  /** Stream a player event back to the host. */
+  sendEvents(events: TapEvent[]): void
+  /** Drop the current scenario, keep discovering (terminal returns to the list). */
+  backToList(): void
+  close(): void
 }
 
 // ---- terminal (join) --------------------------------------------------------
-export interface JoinHandle {
-  sendEvents(events: TapEvent[]): void
-  close(): void
-}
-
-export function joinHost(
-  code: string,
-  opts: {
-    onScenario: (doc: Prototype, mediaBlobs: Record<string, Blob>) => void
-    onStatus: (s: JoinStatus, info?: { received?: number; total?: number; reason?: string }) => void
-  }
-): JoinHandle {
-  let peer: Peer
-  let conn: DataConnection | null = null
+export function joinBroadcast(opts: {
+  onHosts: (hosts: HostInfo[]) => void
+  onScenario: (doc: Prototype, mediaBlobs: Record<string, Blob>) => void
+  onStatus: (s: JoinStatus, info?: { received?: number; total?: number; reason?: string }) => void
+}): JoinHandle {
   let closed = false
-  const outbox: TapEvent[] = [] // all session events; resent on (re)connect, laptop dedups by id
+  let es: EventSource | null = null
+  let curHost: string | null = null
+  let curProto: string | null = null
+  let receiving = false
+  let watchdog: number | null = null
+  const outbox: TapEvent[] = [] // all events this terminal produced; resent, host dedups by id
 
-  // scenario assembly
+  // scenario assembly (reset per request)
   let doc: Prototype | null = null
   let total = 0
-  const blobs: Record<string, Blob> = {}
+  let blobs: Record<string, Blob> = {}
+  let pending: Promise<void>[] = []
 
-  const wireConn = (c: DataConnection) => {
-    conn = c
-    c.on('open', () => {
-      opts.onStatus('connecting')
-      c.send({ t: 'hello' })
-      if (outbox.length) c.send({ t: 'events', events: outbox }) // resend after a reconnect
-    })
-    c.on('data', (raw) => {
-      const msg = raw as {
-        t?: string
-        doc?: Prototype
-        mediaCount?: number
-        mediaId?: string
-        mtype?: 'image' | 'video'
-        mime?: string
-        buf?: ArrayBuffer
-      }
-      if (msg?.t === 'scenario') {
-        doc = msg.doc || null
-        total = msg.mediaCount || 0
-        opts.onStatus('receiving', { received: 0, total })
-      } else if (msg?.t === 'media' && msg.mediaId && msg.buf) {
-        blobs[msg.mediaId] = new Blob([msg.buf], { type: msg.mime || '' })
-        opts.onStatus('receiving', { received: Object.keys(blobs).length, total })
-      } else if (msg?.t === 'scenario-end') {
-        if (doc) {
-          gotScenario = true
+  // --- discovery: poll for live laptops + their scenario lists ---
+  const poll = async () => {
+    if (closed) return
+    try {
+      const r = await fetch('/pair/hosts')
+      const list = (await r.json()) as HostInfo[]
+      if (!closed) opts.onHosts(Array.isArray(list) ? list : [])
+    } catch {
+      if (!closed) opts.onHosts([])
+    }
+  }
+  poll()
+  const pollTimer = window.setInterval(poll, 2500)
+
+  const onData = (msg: { t?: string; doc?: Prototype; mediaCount?: number; mediaId?: string }) => {
+    if (msg.t === 'scenario') {
+      doc = msg.doc || null
+      total = msg.mediaCount || 0
+      pending = []
+      blobs = {}
+      opts.onStatus('receiving', { received: 0, total })
+    } else if (msg.t === 'media' && msg.mediaId) {
+      const id = msg.mediaId
+      pending.push(
+        fetch(`/pair/${curHost}/media/${id}`)
+          .then((r) => r.blob())
+          .then((b) => {
+            blobs[id] = b
+            opts.onStatus('receiving', { received: Object.keys(blobs).length, total })
+          })
+          .catch(() => {})
+      )
+    } else if (msg.t === 'scenario-end') {
+      // Messages arrive in order, but media downloads are async — wait for them.
+      Promise.all(pending).then(() => {
+        if (closed || !receiving) return
+        receiving = false
+        if (watchdog) {
           clearTimeout(watchdog)
+          watchdog = null
+        }
+        if (doc) {
           opts.onScenario(doc, blobs)
           opts.onStatus('ready')
         } else {
           opts.onStatus('error', { reason: 'bad-scenario' })
         }
-      }
-    })
-    c.on('close', () => !closed && opts.onStatus('lost'))
-    c.on('error', () => !closed && opts.onStatus('lost'))
-  }
-
-  const connect = () => {
-    if (closed) return
-    // Default DataConnection: the raw RTCDataChannel is already reliable + ordered
-    // and PeerJS chunks large binary (video). PeerJS's `reliable: true` shim is
-    // flaky and was dropping later app messages — don't use it.
-    conn = peer.connect(peerId(code))
-    wireConn(conn)
-  }
-
-  let gotScenario = false
-  // If nothing arrives in time, the network is likely blocking P2P — surface it
-  // instead of hanging on "Подключаемся…".
-  const watchdog = window.setTimeout(() => {
-    if (!gotScenario && !closed) opts.onStatus('error', { reason: 'timeout' })
-  }, 25000)
-
-  peer = new Peer(undefined as unknown as string, PEER_OPTS)
-  peer.on('open', connect)
-  peer.on('error', (e: { type?: string }) => !closed && opts.onStatus('error', { reason: e?.type || 'peer' }))
-  peer.on('disconnected', () => {
-    if (!closed) {
-      try {
-        peer.reconnect()
-      } catch {}
-    }
-  })
-
-  const send = (events: TapEvent[]) => {
-    if (conn && conn.open && events.length) {
-      try {
-        conn.send({ t: 'events', events })
-      } catch {}
+      })
     }
   }
-  // Periodically resend the whole outbox while connected — the laptop dedups by
-  // event id, so any dropped/lost message is delivered on the next tick.
-  const resend = window.setInterval(() => send(outbox), 4000)
+
+  const openSse = (hostId: string) => {
+    if (curHost === hostId && es) return
+    es?.close()
+    curHost = hostId
+    es = new EventSource(`/pair/${hostId}/join/sse`)
+    es.onmessage = (e) => {
+      try {
+        onData(JSON.parse(e.data))
+      } catch {}
+    }
+    es.onopen = () => {
+      if (closed) return
+      // Re-ask / re-deliver after any reconnect.
+      if (receiving && curProto) post(hostId, 'join', { t: 'request', prototypeId: curProto })
+      if (outbox.length) post(hostId, 'join', { t: 'events', events: outbox })
+    }
+  }
+
+  // Resend the outbox periodically while running — the host dedups by id, so any
+  // dropped message lands on the next tick.
+  const resend = window.setInterval(() => {
+    if (curHost && outbox.length) post(curHost, 'join', { t: 'events', events: outbox })
+  }, 4000)
 
   return {
+    request(hostId: string, prototypeId: string) {
+      curProto = prototypeId
+      receiving = true
+      doc = null
+      blobs = {}
+      pending = []
+      opts.onStatus('receiving', { received: 0, total: 0 })
+      openSse(hostId)
+      post(hostId, 'join', { t: 'request', prototypeId })
+      if (watchdog) clearTimeout(watchdog)
+      watchdog = window.setTimeout(() => {
+        if (receiving && !closed) opts.onStatus('error', { reason: 'timeout' })
+      }, 20000)
+    },
     sendEvents(events: TapEvent[]) {
       outbox.push(...events)
-      send(events)
+      if (curHost) post(curHost, 'join', { t: 'events', events })
+    },
+    backToList() {
+      receiving = false
+      if (watchdog) {
+        clearTimeout(watchdog)
+        watchdog = null
+      }
+      doc = null
+      curProto = null
     },
     close() {
       closed = true
+      clearInterval(pollTimer)
       clearInterval(resend)
-      clearTimeout(watchdog)
-      try {
-        peer.destroy()
-      } catch {}
+      if (watchdog) clearTimeout(watchdog)
+      es?.close()
     },
   }
 }

@@ -63,6 +63,16 @@ export function HeatmapsView({
     loadSessions()
   }, [loadSessions])
 
+  // Live updates: when taps stream in (e.g. from a terminal) re-read sessions,
+  // which cascades to the events reload + canvas redraw below — no manual refresh.
+  useEffect(
+    () =>
+      local.onResultsChanged((pid) => {
+        if (pid === doc.id) loadSessions()
+      }),
+    [doc.id, loadSessions]
+  )
+
   useEffect(() => {
     if (!selScreen) return
     const sessionIds = allSessions ? undefined : [...selSessions]
