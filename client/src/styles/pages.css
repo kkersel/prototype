@@ -448,6 +448,18 @@
   font-size: var(--fs-ui);
   font-weight: var(--fw-medium);
 }
+.screen-item__input {
+  font-size: var(--fs-ui);
+  font-weight: var(--fw-medium);
+  font-family: inherit;
+  background: var(--bg-surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  outline: none;
+  width: 100%;
+  min-width: 0;
+}
 .screen-item__meta {
   font-size: var(--fs-label);
   color: var(--text-tertiary);
@@ -620,7 +632,17 @@
   position: absolute;
   border: 1px dashed rgba(255, 255, 255, 0.55);
   border-radius: var(--radius-sm);
-  pointer-events: none;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.heat__hotspot:hover {
+  border-color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.06);
+}
+.heat__hotspot.is-selected {
+  border: 1.5px solid var(--accent);
+  background: rgba(13, 153, 255, 0.14);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 .heat__hotspot-tag {
   position: absolute;

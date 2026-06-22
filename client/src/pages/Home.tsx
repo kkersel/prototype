@@ -69,6 +69,18 @@ export function Home() {
     nav(`/editor/${doc.id}`)
   }
 
+  const duplicate = async (it: PrototypeSummary) => {
+    try {
+      const doc = await store.getPrototype(it.id)
+      if (!doc) return toast('Прототип не найден', 'error')
+      await store.importPrototype(doc)
+      refresh()
+      toast(`«${it.name} (копия)» создан`)
+    } catch {
+      toast('Не удалось дублировать прототип', 'error')
+    }
+  }
+
   const confirmDelete = async () => {
     if (!deleteTarget) return
     await store.deletePrototype(deleteTarget.id)
@@ -155,6 +167,7 @@ export function Home() {
                       Запустить
                     </Button>
                     <IconButton size="sm" icon="target" label="Тепловые карты" onClick={() => nav(`/heatmaps/${it.id}`)} />
+                    <IconButton size="sm" icon="copy" label="Дублировать" onClick={() => duplicate(it)} />
                     <div className="grow" />
                     <IconButton size="sm" icon="trash" label="Удалить" variant="danger" onClick={() => setDeleteTarget(it)} />
                   </div>

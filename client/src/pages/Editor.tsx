@@ -344,10 +344,18 @@ export function Editor({ initialView }: { initialView?: View } = {}) {
         <HeatmapsView
           doc={doc}
           selScreen={selScreen}
+          selHotspot={selHotspot}
           onSelectScreen={(s) => {
             setSelScreen(s)
             setSelHotspot(null)
           }}
+          onSelectHotspot={setSelHotspot}
+          onUpdateHotspot={(sid, hid, label) =>
+            setScreen(sid, (s) => {
+              const h = s.hotspots.find((x) => x.id === hid)
+              if (h) h.label = label
+            })
+          }
         />
       ) : (
         <>

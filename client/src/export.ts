@@ -151,18 +151,51 @@ function plural(n: number, one: string, few: string, many: string): string {
   return many
 }
 
-function summarySlide(doc: Prototype, stats: ScreenStats[], sessions: SessionInfo[], dateStr: string): string {
+const SUMMARY_MAX_ROWS = 6
+
+function summarySlides(doc: Prototype, stats: ScreenStats[], sessions: SessionInfo[], dateStr: string): string {
   const totalClicks = stats.reduce((a, s) => a + s.total, 0)
   const totalHits = stats.reduce((a, s) => a + s.hits, 0)
   const withData = stats.filter((s) => s.total > 0)
-  const rows = stats
-    .map((s) => {
-      const r = pct(s.hits, s.total)
-      return `<div class="srow"><span class="srow__name">${esc(s.screen.name)}</span><div class="srow__bar"><div class="srow__fill" style="width:${r}%"></div></div><span class="srow__rate">${s.total ? r + '%' : '—'}</span><span class="srow__n">${s.total}</span></div>`
-    })
-    .join('')
   const parts = [...new Set(sessions.map((s) => s.participant).filter(Boolean))]
-  return `<section class="slide slide--summary">
+
+  // Top zones across all screens
+  const allZones: { label: string; screen: string; count: number }[] = []
+  for (const s of stats) {
+    for (const z of s.zones) {
+      allZones.push({ label: z.label, screen: s.screen.name, count: z.count })
+    }
+  }
+  allZones.sort((a, b) => b.count - a.count)
+  const topZones = allZones.slice(0, 7)
+
+  const makeRow = (s: ScreenStats) => {
+    const r = pct(s.hits, s.total)
+    return `<div class="srow"><span class="srow__name">${esc(s.screen.name)}</span><div class="srow__bar"><div class="srow__fill" style="width:${r}%"></div></div><span class="srow__rate">${s.total ? r + '%' : '—'}</span><span class="srow__n">${s.total}</span></div>`
+  }
+
+  const makeTopZoneRows = () =>
+    topZones
+      .map((z) => `<div class="zrow"><span class="zrow__lbl">${esc(z.label)} <span style="color:#9aa0aa;font-weight:400">(${esc(z.screen)})</span></span><div class="zrow__bar"><div class="zrow__fill" style="width:${pct(z.count, topZones[0]?.count || 1)}%"></div></div><span class="zrow__n">${z.count}</span></div>`)
+      .join('')
+
+  // Split screen rows into chunks that fit on a slide
+  const chunks: ScreenStats[][] = []
+  for (let i = 0; i < stats.length; i += SUMMARY_MAX_ROWS) {
+    chunks.push(stats.slice(i, i + SUMMARY_MAX_ROWS))
+  }
+
+  const slides: string[] = []
+
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const chunk = chunks[ci]
+    const isFirst = ci === 0
+    const rowsHtml = chunk.map(makeRow).join('')
+    const from = ci * SUMMARY_MAX_ROWS + 1
+    const to = Math.min((ci + 1) * SUMMARY_MAX_ROWS, stats.length)
+
+    if (isFirst) {
+      slides.push(`<section class="slide slide--summary">
     <div class="sum__head">
       <div class="eyebrow">Итоги тестирования</div>
       <h1 class="title">${esc(doc.name)}</h1>
@@ -175,11 +208,44 @@ function summarySlide(doc: Prototype, stats: ScreenStats[], sessions: SessionInf
       ${statBlock(sessions.length, 'сессий')}
     </div>
     <div class="sum__body">
-      <div class="sum__title">По экранам${withData.length < stats.length ? ` · с данными: ${withData.length}/${stats.length}` : ''}</div>
-      <div class="srows">${rows}</div>
+      <div class="sum__title">По экранам${withData.length < stats.length ? ` · с данными: ${withData.length}/${stats.length}` : ''} · ${from}–${to} из ${stats.length}</div>
+      <div class="srows">${rowsHtml}</div>
+    </div>
+  </section>`)
+    } else {
+      slides.push(`<section class="slide slide--summary">
+    <div class="sum__head">
+      <div class="eyebrow">Итоги тестирования</div>
+      <h1 class="title" style="font-size:32px">${esc(doc.name)}</h1>
+    </div>
+    <div class="sum__body" style="margin-top:24px">
+      <div class="sum__title">По экранам · ${from}–${to} из ${stats.length}</div>
+      <div class="srows">${rowsHtml}</div>
+    </div>
+  </section>`)
+    }
+  }
+
+  // Top zones on a separate slide
+  if (topZones.length) {
+    slides.push(`<section class="slide slide--summary">
+    <div class="sum__head">
+      <div class="eyebrow">Итоги тестирования</div>
+      <h1 class="title" style="font-size:32px">${esc(doc.name)}</h1>
+    </div>
+    <div class="sum__body" style="margin-top:24px">
+      <div class="sum__title">Топ зоны</div>
+      <div class="srows">${makeTopZoneRows()}</div>
     </div>
     ${parts.length ? `<div class="panel__foot">Участники: ${esc(parts.join(', '))}</div>` : ''}
-  </section>`
+  </section>`)
+  } else if (parts.length) {
+    // Participants footer on the last screen slide if no top zones
+    const last = slides[slides.length - 1]
+    slides[slides.length - 1] = last.replace('</section>', `<div class="panel__foot">Участники: ${esc(parts.join(', '))}</div></section>`)
+  }
+
+  return slides.join('\n')
 }
 
 const STYLE = `
@@ -301,7 +367,7 @@ export async function buildResultsHtml(
   const stats = await computeStats(doc, events)
   const dateStr = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })
   const slides = stats.map((st, i) => screenSlide(st, i, stats.length)).join('\n')
-  const summary = summarySlide(doc, stats, sessions, dateStr)
+  const summary = summarySlides(doc, stats, sessions, dateStr)
   const autoPrint = opts.autoPrint
     ? `<script>window.addEventListener('load',function(){setTimeout(function(){window.focus();window.print()},350)});window.onafterprint=function(){window.close()};</script>`
     : ''

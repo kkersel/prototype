@@ -3,7 +3,7 @@ import * as store from '../../store'
 import { drawHeatmap } from '../../heatmap'
 import { buildResultsHtml, exportResultsDeck } from '../../export'
 import type { Prototype, SessionInfo, TapEvent } from '../../types'
-import { Badge, Button, Checkbox, EmptyState, Field, Segmented, Slider, toast, type SegmentOption } from '../../components/ui'
+import { Badge, Button, Checkbox, EmptyState, Field, IconButton, Segmented, Slider, toast, type SegmentOption } from '../../components/ui'
 
 type Mode = 'heat' | 'dots'
 type Filter = 'all' | 'hit' | 'miss'
@@ -26,11 +26,17 @@ const FILTER_OPTIONS: SegmentOption<Filter>[] = [
 export function HeatmapsView({
   doc,
   selScreen,
+  selHotspot,
   onSelectScreen,
+  onSelectHotspot,
+  onUpdateHotspot,
 }: {
   doc: Prototype
   selScreen: string | null
+  selHotspot: string | null
   onSelectScreen: (id: string) => void
+  onSelectHotspot: (id: string | null) => void
+  onUpdateHotspot: (screenId: string, hotspotId: string, label: string) => void
 }) {
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [selSessions, setSelSessions] = useState<Set<string>>(new Set())
@@ -43,6 +49,14 @@ export function HeatmapsView({
   const [exporting, setExporting] = useState(false)
   const [exportingPdf, setExportingPdf] = useState(false)
   const importRef = useRef<HTMLInputElement>(null)
+  const [editingLabel, setEditingLabel] = useState<string | null>(null)
+  const labelInputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (editingLabel && labelInputRef.current) {
+      labelInputRef.current.focus()
+      labelInputRef.current.select()
+    }
+  }, [editingLabel])
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [box, setBox] = useState({ w: 0, h: 0 })
@@ -235,17 +249,21 @@ export function HeatmapsView({
               ) : (
                 <div style={{ width: dims.w, height: dims.h, background: '#000' }} />
               )}
-              {screen.hotspots.map((h) => (
-                <div
-                  key={h.id}
-                  className="heat__hotspot"
-                  style={{ left: h.x * dims.w, top: h.y * dims.h, width: h.w * dims.w, height: h.h * dims.h }}
-                >
-                  <span className="heat__hotspot-tag">
-                    {h.label || `${stats.byHotspot.get(h.id) || 0} кл.`}
-                  </span>
-                </div>
-              ))}
+              {screen.hotspots.map((h) => {
+                const count = stats.byHotspot.get(h.id) || 0
+                return (
+                  <div
+                    key={h.id}
+                    className={`heat__hotspot${selHotspot === h.id ? ' is-selected' : ''}`}
+                    style={{ left: h.x * dims.w, top: h.y * dims.h, width: h.w * dims.w, height: h.h * dims.h }}
+                    onClick={(e) => { e.stopPropagation(); onSelectHotspot(selHotspot === h.id ? null : h.id) }}
+                  >
+                    <span className="heat__hotspot-tag">
+                      {h.label ? `${h.label} · ${count} кл.` : `${count} кл.`}
+                    </span>
+                  </div>
+                )
+              })}
               <canvas ref={canvasRef} />
             </div>
           )}
@@ -352,6 +370,58 @@ export function HeatmapsView({
             <Badge>мимо {stats.miss}</Badge>
           </div>
         </div>
+
+        {screen && screen.hotspots.length > 0 && (
+          <div className="panel__section col">
+            <div className="panel__title" style={{ margin: 0 }}>Зоны · {screen.hotspots.length}</div>
+            <div className="col" style={{ gap: 2 }}>
+              {screen.hotspots.map((h, i) => {
+                const count = stats.byHotspot.get(h.id) || 0
+                const isEditing = editingLabel === h.id
+                return (
+                  <div
+                    key={h.id}
+                    className={`screen-item${selHotspot === h.id ? ' is-active' : ''}`}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => { if (!isEditing) onSelectHotspot(selHotspot === h.id ? null : h.id) }}
+                  >
+                    {isEditing ? (
+                      <input
+                        ref={labelInputRef}
+                        className="screen-item__input"
+                        defaultValue={h.label || ''}
+                        placeholder={`Зона ${i + 1}`}
+                        autoFocus
+                        onClick={(e) => e.stopPropagation()}
+                        onBlur={(e) => {
+                          onUpdateHotspot(screen.id, h.id, e.target.value)
+                          setEditingLabel(null)
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            onUpdateHotspot(screen.id, h.id, (e.target as HTMLInputElement).value)
+                            setEditingLabel(null)
+                          } else if (e.key === 'Escape') {
+                            setEditingLabel(null)
+                          }
+                        }}
+                      />
+                    ) : (
+                      <span
+                        className="screen-item__name grow truncate"
+                        onDoubleClick={(e) => { e.stopPropagation(); setEditingLabel(h.id) }}
+                        title="Двойной клик — переименовать"
+                      >
+                        {h.label || `Зона ${i + 1}`}
+                      </span>
+                    )}
+                    <Badge>{count}</Badge>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="panel__section col">
           <Button block variant="primary" icon="download" loading={exportingPdf} onClick={onExportPdf}>

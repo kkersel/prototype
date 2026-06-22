@@ -34,6 +34,7 @@ export type IconName =
   | 'p12'
   | 'undo'
   | 'redo'
+  | 'copy'
 
 const PATHS: Record<IconName, JSX.Element> = {
   plus: <path d="M10 4v12M4 10h12" />,
@@ -96,6 +97,12 @@ const PATHS: Record<IconName, JSX.Element> = {
   map: <path d="M3.5 5.5l4-1.5 5 1.5 4-1.5v10l-4 1.5-5-1.5-4 1.5v-10zM7.5 4v11M12.5 5.5v11" />,
   undo: <path d="M8 6L4 10l4 4M4 10h7a4.5 4.5 0 0 1 0 9H9" />,
   redo: <path d="M12 6l4 4-4 4M16 10H9a4.5 4.5 0 0 0 0 9h2" />,
+  copy: (
+    <>
+      <rect x="5.5" y="5.5" width="10" height="10" rx="1.5" />
+      <path d="M4 14.5V4.5A1 1 0 0 1 5 3.5h10" />
+    </>
+  ),
   // Device glyphs (filled, drawn on a 24-grid → scaled to the 20 viewBox). The
   // P10 frame is taller than the squarer P12 to hint at their aspect ratios.
   p10: (
