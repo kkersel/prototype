@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as store from '../../store'
 import { drawHeatmap } from '../../heatmap'
 import { buildResultsHtml, exportResultsDeck } from '../../export'
+import type { ExportFilter, ExportMode } from '../../export'
 import type { Prototype, SessionInfo, TapEvent } from '../../types'
 import { Badge, Button, Checkbox, EmptyState, Field, IconButton, Modal, Segmented, Slider, toast, type SegmentOption } from '../../components/ui'
 
@@ -158,30 +159,42 @@ export function HeatmapsView({
     }
   }, [filtered, dims, mode, radius, sessions, selEvents])
 
+  const findDotAt = useCallback(
+    (cx: number, cy: number) => {
+      const hitRadius = 15
+      for (const ev of filtered) {
+        const dx = ev.x * dims.w - cx
+        const dy = ev.y * dims.h - cy
+        if (dx * dx + dy * dy <= hitRadius * hitRadius) return ev
+      }
+      return null
+    },
+    [filtered, dims]
+  )
+
+  const toggleDot = useCallback(
+    (ev: TapEvent) => {
+      setSelEvents((prev) => {
+        const next = new Set(prev)
+        next.has(ev.id) ? next.delete(ev.id) : next.add(ev.id)
+        return next
+      })
+    },
+    []
+  )
+
   const onStackClick = useCallback(
     (e: React.MouseEvent) => {
       if (mode !== 'dots') return
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-      const cx = e.clientX - rect.left
-      const cy = e.clientY - rect.top
-      const hitRadius = 15
-      let found: TapEvent | null = null
-      for (const ev of filtered) {
-        const dx = ev.x * dims.w - cx
-        const dy = ev.y * dims.h - cy
-        if (dx * dx + dy * dy <= hitRadius * hitRadius) { found = ev; break }
-      }
+      const found = findDotAt(e.clientX - rect.left, e.clientY - rect.top)
       if (found) {
-        setSelEvents((prev) => {
-          const next = new Set(prev)
-          next.has(found!.id) ? next.delete(found!.id) : next.add(found!.id)
-          return next
-        })
+        toggleDot(found)
       } else {
         setSelEvents(new Set())
       }
     },
-    [mode, filtered, dims]
+    [mode, findDotAt, toggleDot]
   )
 
   const toggleSession = (sid: string) => {
@@ -208,8 +221,9 @@ export function HeatmapsView({
   const onExport = async () => {
     setExporting(true)
     try {
-      const all = await store.readEvents(doc.id) // all screens, all sessions
-      await exportResultsDeck(doc, all, sessions)
+      const all = await store.readEvents(doc.id)
+      const exportMode: ExportMode = mode === 'heat' ? 'both' : 'dots'
+      await exportResultsDeck(doc, all, sessions, { mode: exportMode, radius, filter })
     } catch {
       toast('Не удалось собрать презентацию', 'error')
     } finally {
@@ -218,13 +232,13 @@ export function HeatmapsView({
   }
 
   const onExportPdf = async () => {
-    // open the print window synchronously (inside the click) so it isn't blocked
     const win = window.open('', '_blank')
     if (win) win.document.write('<!doctype html><meta charset="utf-8"><body style="font:16px sans-serif;padding:40px;color:#62666d">Готовим PDF…</body>')
     setExportingPdf(true)
     try {
       const all = await store.readEvents(doc.id)
-      const html = await buildResultsHtml(doc, all, sessions, { autoPrint: true })
+      const exportMode: ExportMode = mode === 'heat' ? 'both' : 'dots'
+      const html = await buildResultsHtml(doc, all, sessions, { autoPrint: true, mode: exportMode, radius, filter })
       if (win) {
         win.document.open()
         win.document.write(html)
@@ -334,7 +348,19 @@ export function HeatmapsView({
                     key={h.id}
                     className={`heat__hotspot${selHotspot === h.id ? ' is-selected' : ''}`}
                     style={{ left: h.x * dims.w, top: h.y * dims.h, width: h.w * dims.w, height: h.h * dims.h, zIndex: 2 }}
-                    onClick={(e) => { e.stopPropagation(); onSelectHotspot(selHotspot === h.id ? null : h.id) }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (mode === 'dots') {
+                        const stack = (e.currentTarget as HTMLElement).parentElement!
+                        const rect = stack.getBoundingClientRect()
+                        const found = findDotAt(e.clientX - rect.left, e.clientY - rect.top)
+                        if (found) {
+                          toggleDot(found)
+                        }
+                        return
+                      }
+                      onSelectHotspot(selHotspot === h.id ? null : h.id)
+                    }}
                   >
                     <span className="heat__hotspot-tag">
                       {h.label ? `${h.label} · ${count} кл.` : `${count} кл.`}

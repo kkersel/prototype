@@ -9,6 +9,16 @@ const ACCENT = '#0d99ff'
 const SUCCESS = '#12a150'
 const MISS = '#e5484d'
 
+const SESSION_COLORS = ['#0d99ff', '#12a150', '#d98c12', '#e5484d', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16']
+
+export type ExportMode = 'heat' | 'dots' | 'both'
+export type ExportFilter = 'all' | 'hit' | 'miss'
+export interface ExportOptions {
+  mode?: ExportMode
+  radius?: number
+  filter?: ExportFilter
+}
+
 type ScreenStats = {
   screen: Screen
   total: number
@@ -17,6 +27,7 @@ type ScreenStats = {
   sessions: number
   zones: { label: string; count: number }[]
   img: string | null
+  dotsImg: string | null
 }
 
 function esc(s: string): string {
@@ -66,38 +77,66 @@ async function renderScreenImage(
   w: number,
   h: number,
   radius: number,
-  events: TapEvent[]
-): Promise<string | null> {
-  const canvas = document.createElement('canvas')
-  canvas.width = w
-  canvas.height = h
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return null
-  ctx.fillStyle = '#000'
-  ctx.fillRect(0, 0, w, h)
-  try {
-    const url = screen.media?.url
-    if (url && screen.media?.type === 'image') {
-      ctx.drawImage(await loadImage(url), 0, 0, w, h)
-    } else if (url && screen.media?.type === 'video') {
-      const v = await loadVideoFrame(url)
-      if (v) ctx.drawImage(v, 0, 0, w, h)
-    }
-  } catch {
-    /* keep the black fallback */
-  }
-  if (events.length) {
+  events: TapEvent[],
+  mode: ExportMode = 'heat'
+): Promise<{ heat: string | null; dots: string | null }> {
+  const heatEvents = mode === 'dots' ? [] : events
+  const dotsEvents = mode === 'heat' ? [] : events
+
+  const renderHeat = async (): Promise<string | null> => {
+    if (!heatEvents.length) return null
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')!
+    try {
+      const url = screen.media?.url
+      if (url && screen.media?.type === 'image') {
+        ctx.drawImage(await loadImage(url), 0, 0, w, h)
+      } else if (url && screen.media?.type === 'video') {
+        const v = await loadVideoFrame(url)
+        if (v) ctx.drawImage(v, 0, 0, w, h)
+      }
+    } catch { /* keep transparent fallback */ }
     const heat = document.createElement('canvas')
     heat.width = w
     heat.height = h
-    drawHeatmap(
-      heat,
-      events.map((e) => ({ x: e.x * w, y: e.y * h, value: 1 })),
-      { radius, blur: radius * 0.8 }
-    )
+    drawHeatmap(heat, heatEvents.map((e) => ({ x: e.x * w, y: e.y * h, value: 1 })), { radius, blur: radius * 0.8 })
     ctx.drawImage(heat, 0, 0)
+    return canvas.toDataURL('image/png')
   }
-  return canvas.toDataURL('image/jpeg', 0.85)
+
+  const renderDots = async (): Promise<string | null> => {
+    if (!dotsEvents.length) return null
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')!
+    try {
+      const url = screen.media?.url
+      if (url && screen.media?.type === 'image') {
+        ctx.drawImage(await loadImage(url), 0, 0, w, h)
+      } else if (url && screen.media?.type === 'video') {
+        const v = await loadVideoFrame(url)
+        if (v) ctx.drawImage(v, 0, 0, w, h)
+      }
+    } catch { /* keep transparent fallback */ }
+    const sessions = [...new Set(dotsEvents.map((e) => e.sessionId))]
+    const colorOf = new Map<string, string>()
+    sessions.forEach((s, i) => colorOf.set(s, SESSION_COLORS[i % SESSION_COLORS.length]))
+    for (const e of dotsEvents) {
+      ctx.beginPath()
+      ctx.fillStyle = colorOf.get(e.sessionId) || ACCENT
+      ctx.globalAlpha = e.hit ? 0.85 : 0.5
+      ctx.arc(e.x * w, e.y * h, e.hit ? 7 : 5, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    ctx.globalAlpha = 1
+    return canvas.toDataURL('image/png')
+  }
+
+  const [heat, dots] = await Promise.all([renderHeat(), renderDots()])
+  return { heat, dots }
 }
 
 function statBlock(value: string | number, label: string, color?: string): string {
@@ -122,9 +161,15 @@ function zonesBlock(zones: { label: string; count: number }[]): string {
   return `<div class="zones"><div class="zones__title">Клики по зонам</div>${rows}${rest > 0 ? `<div class="zones__more">и ещё ${rest}</div>` : ''}</div>`
 }
 
-function screenSlide(st: ScreenStats, idx: number, total: number): string {
-  const media = st.img
-    ? `<img src="${st.img}" alt="">`
+function screenSlide(st: ScreenStats, idx: number, total: number, mode: ExportMode): string {
+  const hasBoth = st.img && st.dotsImg
+  const mediaItems: string[] = []
+  if (st.img) mediaItems.push(`<img src="${st.img}" alt=""${hasBoth ? ' style="width:100%;height:100%;object-fit:contain"' : ''}>`)
+  if (st.dotsImg) mediaItems.push(`<img src="${st.dotsImg}" alt=""${hasBoth ? ' style="width:100%;height:100%;object-fit:contain"' : ''}>`)
+  const media = mediaItems.length
+    ? hasBoth
+      ? `<div class="media__dual">${mediaItems.join('')}</div>`
+      : mediaItems[0]
     : `<div class="media__empty">Нет медиа</div>`
   return `<section class="slide">
     <div class="slide__media">${media}</div>
@@ -256,6 +301,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Ar
 @media screen{.slide{position:absolute;transform:scale(var(--s,1));display:none}.slide.is-active{display:flex}}
 .slide__media{flex:0 0 40%;display:flex;align-items:center;justify-content:center;min-width:0}
 .slide__media img{max-width:100%;max-height:100%;border-radius:28px;box-shadow:0 24px 60px rgba(16,20,30,.28);object-fit:contain}
+.media__dual{display:flex;gap:16px;width:100%;height:100%;align-items:center}
+.media__dual img{flex:1;min-width:0;max-height:100%;border-radius:20px;box-shadow:0 16px 40px rgba(16,20,30,.22);object-fit:contain}
 .media__empty{color:#9aa0aa;font-size:18px}
 .slide__panel{flex:1;min-width:0;background:#eceef2;border-radius:40px;padding:52px;display:flex;flex-direction:column}
 .eyebrow{font-size:15px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#9aa0aa}
@@ -299,11 +346,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Ar
 .nav button:hover{background:rgba(255,255,255,.16)}
 #pos{min-width:54px;text-align:center;opacity:.85}
 @media print{
-  *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+  *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}
   @page{size:13.333in 7.5in;margin:0}
   .stage{position:static;display:block;background:#fff}
-  .slide{display:flex!important;position:relative;transform:none;page-break-after:always;border-radius:0}
+  .slide{display:flex!important;position:relative;transform:none;page-break-after:always;border-radius:0;background:#fff!important}
   .slide:last-child{page-break-after:auto}
+  .slide__panel{background:#eceef2!important}
+  .slide__media{background:transparent}
+  .stat{background:#fff!important}
+  .stat__num,.stat__lbl{color:inherit!important}
+  .srow__fill,.zrow__fill,.rate__fill{background:#0d99ff!important}
   .nav{display:none}
 }
 `
@@ -318,15 +370,18 @@ document.querySelectorAll('[data-nav]').forEach(function(b){b.onclick=function()
 fit();show(0);
 `
 
-async function computeStats(doc: Prototype, events: TapEvent[]): Promise<ScreenStats[]> {
+async function computeStats(doc: Prototype, events: TapEvent[], opts: ExportOptions = {}): Promise<ScreenStats[]> {
+  const filter = opts.filter ?? 'all'
   const aspect = doc.canvas.width / doc.canvas.height
   const MAX = 1100
   const w = aspect >= 1 ? MAX : Math.round(MAX * aspect)
   const h = aspect >= 1 ? Math.round(MAX / aspect) : MAX
-  const radius = Math.max(14, Math.round(Math.min(w, h) * 0.05))
+  const radius = opts.radius ?? Math.max(14, Math.round(Math.min(w, h) * 0.05))
+
+  const filtered = events.filter((e) => (filter === 'all' ? true : filter === 'hit' ? e.hit : !e.hit))
 
   const byScreen = new Map<string, TapEvent[]>()
-  for (const e of events) {
+  for (const e of filtered) {
     const list = byScreen.get(e.screenId)
     if (list) list.push(e)
     else byScreen.set(e.screenId, [e])
@@ -342,7 +397,7 @@ async function computeStats(doc: Prototype, events: TapEvent[]): Promise<ScreenS
       .map((hp) => ({ label: hp.label || 'Без названия', count: byZone.get(hp.id) || 0 }))
       .filter((z) => z.count > 0)
       .sort((a, b) => b.count - a.count)
-    const img = await renderScreenImage(screen, w, h, radius, evs)
+    const { heat, dots } = await renderScreenImage(screen, w, h, radius, evs, 'both')
     stats.push({
       screen,
       total: evs.length,
@@ -350,7 +405,8 @@ async function computeStats(doc: Prototype, events: TapEvent[]): Promise<ScreenS
       miss: evs.length - hits,
       sessions: new Set(evs.map((e) => e.sessionId)).size,
       zones,
-      img,
+      img: heat,
+      dotsImg: dots,
     })
   }
   return stats
@@ -362,11 +418,11 @@ export async function buildResultsHtml(
   doc: Prototype,
   events: TapEvent[],
   sessions: SessionInfo[],
-  opts: { autoPrint?: boolean } = {}
+  opts: { autoPrint?: boolean; mode?: ExportMode; radius?: number; filter?: ExportFilter } = {}
 ): Promise<string> {
-  const stats = await computeStats(doc, events)
+  const stats = await computeStats(doc, events, { mode: opts.mode, radius: opts.radius, filter: opts.filter })
   const dateStr = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })
-  const slides = stats.map((st, i) => screenSlide(st, i, stats.length)).join('\n')
+  const slides = stats.map((st, i) => screenSlide(st, i, stats.length, 'both')).join('\n')
   const summary = summarySlides(doc, stats, sessions, dateStr)
   const autoPrint = opts.autoPrint
     ? `<script>window.addEventListener('load',function(){setTimeout(function(){window.focus();window.print()},350)});window.onafterprint=function(){window.close()};</script>`
@@ -380,8 +436,13 @@ export async function buildResultsHtml(
 <script>${SCRIPT}</script>${autoPrint}</body></html>`
 }
 
-export async function exportResultsDeck(doc: Prototype, events: TapEvent[], sessions: SessionInfo[]): Promise<void> {
-  const html = await buildResultsHtml(doc, events, sessions)
+export async function exportResultsDeck(
+  doc: Prototype,
+  events: TapEvent[],
+  sessions: SessionInfo[],
+  opts: { mode?: ExportMode; radius?: number; filter?: ExportFilter } = {}
+): Promise<void> {
+  const html = await buildResultsHtml(doc, events, sessions, opts)
   const blob = new Blob([html], { type: 'text/html' })
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
