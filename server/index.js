@@ -17,6 +17,8 @@ import {
   deletePrototype,
   appendEvents,
   readEvents,
+  deleteEvents,
+  deleteEventsBySession,
   listSessions,
 } from './store.js'
 
@@ -143,6 +145,18 @@ api.get('/prototypes/:id/events', async (req, res) => {
 
 api.get('/prototypes/:id/sessions', async (req, res) => {
   res.json(await listSessions(req.params.id))
+})
+
+api.delete('/prototypes/:id/events', async (req, res) => {
+  if (Array.isArray(req.body?.ids)) {
+    const result = await deleteEvents(req.params.id, req.body.ids)
+    return res.json({ ok: true, ...result })
+  }
+  if (req.body?.sessionId) {
+    const result = await deleteEventsBySession(req.params.id, req.body.sessionId)
+    return res.json({ ok: true, ...result })
+  }
+  res.status(400).json({ error: 'provide ids or sessionId' })
 })
 
 app.use('/api', api)

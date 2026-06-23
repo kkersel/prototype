@@ -34,3 +34,5 @@ export const readEvents = (
   opts: { screen?: string; sessions?: string[] } = {}
 ): Promise<TapEvent[]> => api.getEvents(prototypeId, opts)
 export const listSessions = (prototypeId: string): Promise<SessionInfo[]> => api.getSessions(prototypeId)
+export const deleteEvents = (prototypeId: string, opts: { ids?: string[]; sessionId?: string }): Promise<{ deleted: number }> =>
+  api.deleteEvents(prototypeId, opts)

@@ -289,3 +289,20 @@ export async function listSessions(prototypeId: string): Promise<SessionInfo[]> 
   }
   return [...map.values()].sort((a, b) => b.lastTs - a.lastTs)
 }
+
+export async function deleteEvents(prototypeId: string, opts: { ids?: string[]; sessionId?: string }): Promise<{ deleted: number }> {
+  const all = await readEvents(prototypeId)
+  let toDelete: TapEvent[]
+  if (opts.ids) {
+    const idSet = new Set(opts.ids)
+    toDelete = all.filter((e) => idSet.has(e.id))
+  } else if (opts.sessionId) {
+    toDelete = all.filter((e) => e.sessionId === opts.sessionId)
+  } else {
+    return { deleted: 0 }
+  }
+  if (!toDelete.length) return { deleted: 0 }
+  await Promise.all(toDelete.map((e) => del(EVENTS, e.id)))
+  for (const l of resultsListeners) l(prototypeId)
+  return { deleted: toDelete.length }
+}

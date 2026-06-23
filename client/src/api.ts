@@ -60,4 +60,11 @@ export const api = {
 
   getSessions: (prototypeId: string) =>
     fetch(`/api/prototypes/${prototypeId}/sessions`).then((r) => j<SessionInfo[]>(r)),
+
+  deleteEvents: (prototypeId: string, opts: { ids?: string[]; sessionId?: string }) =>
+    fetch(`/api/prototypes/${prototypeId}/events`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(opts),
+    }).then((r) => j<{ ok: boolean; deleted: number }>(r)),
 }

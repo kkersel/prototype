@@ -140,6 +140,36 @@ export async function listSessions(prototypeId) {
   return [...map.values()].sort((a, b) => b.lastTs - a.lastTs)
 }
 
+export async function deleteEvents(prototypeId, eventIds) {
+  if (!eventIds?.length) return { deleted: 0 }
+  const toDelete = new Set(eventIds)
+  const lines = []
+  let deleted = 0
+  await forEachEvent(prototypeId, (e) => {
+    if (toDelete.has(e.id)) { deleted++; return }
+    lines.push(JSON.stringify(e))
+  })
+  if (deleted > 0) {
+    if (lines.length) await fsp.writeFile(eventPath(prototypeId), lines.join('\n') + '\n')
+    else await fsp.rm(eventPath(prototypeId), { force: true })
+  }
+  return { deleted }
+}
+
+export async function deleteEventsBySession(prototypeId, sessionId) {
+  const lines = []
+  let deleted = 0
+  await forEachEvent(prototypeId, (e) => {
+    if (e.sessionId === sessionId) { deleted++; return }
+    lines.push(JSON.stringify(e))
+  })
+  if (deleted > 0) {
+    if (lines.length) await fsp.writeFile(eventPath(prototypeId), lines.join('\n') + '\n')
+    else await fsp.rm(eventPath(prototypeId), { force: true })
+  }
+  return { deleted }
+}
+
 async function forEachEvent(prototypeId, cb) {
   let raw
   try {

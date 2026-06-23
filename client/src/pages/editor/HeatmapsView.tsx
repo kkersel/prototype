@@ -3,7 +3,7 @@ import * as store from '../../store'
 import { drawHeatmap } from '../../heatmap'
 import { buildResultsHtml, exportResultsDeck } from '../../export'
 import type { Prototype, SessionInfo, TapEvent } from '../../types'
-import { Badge, Button, Checkbox, EmptyState, Field, IconButton, Segmented, Slider, toast, type SegmentOption } from '../../components/ui'
+import { Badge, Button, Checkbox, EmptyState, Field, IconButton, Modal, Segmented, Slider, toast, type SegmentOption } from '../../components/ui'
 
 type Mode = 'heat' | 'dots'
 type Filter = 'all' | 'hit' | 'miss'
@@ -51,6 +51,10 @@ export function HeatmapsView({
   const importRef = useRef<HTMLInputElement>(null)
   const [editingLabel, setEditingLabel] = useState<string | null>(null)
   const labelInputRef = useRef<HTMLInputElement>(null)
+  const [selEvents, setSelEvents] = useState<Set<string>>(new Set())
+  const [deleteModal, setDeleteModal] = useState<'events' | 'session' | null>(null)
+  const [deleteSessionId, setDeleteSessionId] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
   useEffect(() => {
     if (editingLabel && labelInputRef.current) {
       labelInputRef.current.focus()
@@ -142,10 +146,43 @@ export function HeatmapsView({
         ctx.globalAlpha = e.hit ? 0.85 : 0.5
         ctx.arc(e.x * dims.w, e.y * dims.h, e.hit ? 7 : 5, 0, Math.PI * 2)
         ctx.fill()
+        if (selEvents.has(e.id)) {
+          ctx.beginPath()
+          ctx.strokeStyle = '#fff'
+          ctx.lineWidth = 2
+          ctx.arc(e.x * dims.w, e.y * dims.h, (e.hit ? 7 : 5) + 3, 0, Math.PI * 2)
+          ctx.stroke()
+        }
       }
       ctx.globalAlpha = 1
     }
-  }, [filtered, dims, mode, radius, sessions])
+  }, [filtered, dims, mode, radius, sessions, selEvents])
+
+  const onStackClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (mode !== 'dots') return
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+      const cx = e.clientX - rect.left
+      const cy = e.clientY - rect.top
+      const hitRadius = 15
+      let found: TapEvent | null = null
+      for (const ev of filtered) {
+        const dx = ev.x * dims.w - cx
+        const dy = ev.y * dims.h - cy
+        if (dx * dx + dy * dy <= hitRadius * hitRadius) { found = ev; break }
+      }
+      if (found) {
+        setSelEvents((prev) => {
+          const next = new Set(prev)
+          next.has(found!.id) ? next.delete(found!.id) : next.add(found!.id)
+          return next
+        })
+      } else {
+        setSelEvents(new Set())
+      }
+    },
+    [mode, filtered, dims]
+  )
 
   const toggleSession = (sid: string) => {
     setAllSessions(false)
@@ -203,6 +240,39 @@ export function HeatmapsView({
     }
   }
 
+  const confirmDeleteSelected = async () => {
+    if (deleting) return
+    setDeleting(true)
+    try {
+      const ids = [...selEvents]
+      const res = await store.deleteEvents(doc.id, { ids })
+      setSelEvents(new Set())
+      toast(`Удалено кликов: ${res.deleted}`)
+      loadSessions()
+    } catch {
+      toast('Не удалось удалить', 'error')
+    } finally {
+      setDeleting(false)
+      setDeleteModal(null)
+    }
+  }
+
+  const confirmDeleteSession = async () => {
+    if (deleting || !deleteSessionId) return
+    setDeleting(true)
+    try {
+      const res = await store.deleteEvents(doc.id, { sessionId: deleteSessionId })
+      toast(`Удалено кликов сессии: ${res.deleted}`)
+      loadSessions()
+    } catch {
+      toast('Не удалось удалить сессию', 'error')
+    } finally {
+      setDeleting(false)
+      setDeleteModal(null)
+      setDeleteSessionId(null)
+    }
+  }
+
   const stats = useMemo(() => {
     const hits = events.filter((e) => e.hit).length
     const byHotspot = new Map<string, number>()
@@ -249,13 +319,21 @@ export function HeatmapsView({
               ) : (
                 <div style={{ width: dims.w, height: dims.h, background: '#000' }} />
               )}
+              <canvas ref={canvasRef} />
+              {mode === 'dots' && (
+                <div
+                  className="heat__click-layer"
+                  style={{ position: 'absolute', inset: 0, zIndex: 1, cursor: 'pointer' }}
+                  onClick={onStackClick}
+                />
+              )}
               {screen.hotspots.map((h) => {
                 const count = stats.byHotspot.get(h.id) || 0
                 return (
                   <div
                     key={h.id}
                     className={`heat__hotspot${selHotspot === h.id ? ' is-selected' : ''}`}
-                    style={{ left: h.x * dims.w, top: h.y * dims.h, width: h.w * dims.w, height: h.h * dims.h }}
+                    style={{ left: h.x * dims.w, top: h.y * dims.h, width: h.w * dims.w, height: h.h * dims.h, zIndex: 2 }}
                     onClick={(e) => { e.stopPropagation(); onSelectHotspot(selHotspot === h.id ? null : h.id) }}
                   >
                     <span className="heat__hotspot-tag">
@@ -264,7 +342,6 @@ export function HeatmapsView({
                   </div>
                 )
               })}
-              <canvas ref={canvasRef} />
             </div>
           )}
         </div>
@@ -336,27 +413,36 @@ export function HeatmapsView({
                 label={<span style={{ fontWeight: 'var(--fw-semibold)' }}>Все сессии</span>}
               />
               {sessions.map((s, i) => (
-                <Checkbox
-                  key={s.sessionId}
-                  className="session-row"
-                  checked={allSessions || selSessions.has(s.sessionId)}
-                  disabled={allSessions}
-                  onChange={() => toggleSession(s.sessionId)}
-                  label={
-                    <span className="session-row__main">
-                      <span className="session-dot" style={{ background: SESSION_COLORS[i % SESSION_COLORS.length] }} />
-                      <span className="grow truncate">{s.participant || s.device || 'сессия'}</span>
-                      <span className="col" style={{ alignItems: 'flex-end', gap: 2, flexShrink: 0 }}>
-                        <span className="dim" style={{ fontSize: 'var(--fs-ui)', lineHeight: 1 }}>{s.count}</span>
-                        <span className="dim" style={{ fontSize: 10, lineHeight: 1 }}>
-                          {new Date(s.firstTs).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
-                          {' '}
-                          {new Date(s.firstTs).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+                <div key={s.sessionId} className="session-row-wrap">
+                  <Checkbox
+                    className="session-row"
+                    checked={allSessions || selSessions.has(s.sessionId)}
+                    disabled={allSessions}
+                    onChange={() => toggleSession(s.sessionId)}
+                    label={
+                      <span className="session-row__main">
+                        <span className="session-dot" style={{ background: SESSION_COLORS[i % SESSION_COLORS.length] }} />
+                        <span className="grow truncate">{s.participant || s.device || 'сессия'}</span>
+                        <span className="col" style={{ alignItems: 'flex-end', gap: 2, flexShrink: 0 }}>
+                          <span className="dim" style={{ fontSize: 'var(--fs-ui)', lineHeight: 1 }}>{s.count}</span>
+                          <span className="dim" style={{ fontSize: 10, lineHeight: 1 }}>
+                            {new Date(s.firstTs).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
+                            {' '}
+                            {new Date(s.firstTs).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
                         </span>
                       </span>
-                    </span>
-                  }
-                />
+                    }
+                  />
+                  <IconButton
+                    icon="trash"
+                    size="sm"
+                    variant="danger"
+                    label="Удалить сессию"
+                    className="session-row__delete"
+                    onClick={(e) => { e.stopPropagation(); setDeleteSessionId(s.sessionId); setDeleteModal('session') }}
+                  />
+                </div>
               ))}
             </>
           )}
@@ -369,6 +455,17 @@ export function HeatmapsView({
             <Badge variant="success">по зонам {stats.hits}</Badge>
             <Badge>мимо {stats.miss}</Badge>
           </div>
+          {selEvents.size > 0 && (
+            <Button
+              block
+              variant="danger"
+              icon="trash"
+              style={{ marginTop: 'var(--space-2)' }}
+              onClick={() => setDeleteModal('events')}
+            >
+              Удалить выбранное ({selEvents.size})
+            </Button>
+          )}
         </div>
 
         {screen && screen.hotspots.length > 0 && (
@@ -445,6 +542,34 @@ export function HeatmapsView({
           </Button>
         </div>
       </div>
+
+      <Modal
+        open={deleteModal === 'events'}
+        title="Удалить клики?"
+        onClose={() => setDeleteModal(null)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setDeleteModal(null)}>Отмена</Button>
+            <Button variant="danger" solid loading={deleting} onClick={confirmDeleteSelected}>Удалить</Button>
+          </>
+        }
+      >
+        <p className="muted">Будет удалено {selEvents.size} кликов. Это действие необратимо.</p>
+      </Modal>
+
+      <Modal
+        open={deleteModal === 'session'}
+        title="Удалить сессию?"
+        onClose={() => { setDeleteModal(null); setDeleteSessionId(null) }}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => { setDeleteModal(null); setDeleteSessionId(null) }}>Отмена</Button>
+            <Button variant="danger" solid loading={deleting} onClick={confirmDeleteSession}>Удалить</Button>
+          </>
+        }
+      >
+        <p className="muted">Все клики этой сессии будут удалены безвозвратно.</p>
+      </Modal>
     </>
   )
 }

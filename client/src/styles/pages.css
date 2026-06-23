@@ -692,6 +692,26 @@
   border-radius: 3px;
   flex: none;
 }
+.session-row-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.session-row-wrap .session-row {
+  flex: 1;
+  min-width: 0;
+}
+.session-row__delete {
+  opacity: 0;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+.session-row-wrap:hover .session-row__delete {
+  opacity: 0.6;
+}
+.session-row__delete:hover {
+  opacity: 1 !important;
+}
 
 /* ============ Player (dark) ============ */
 .player {
